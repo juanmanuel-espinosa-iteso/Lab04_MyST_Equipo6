@@ -1,0 +1,24 @@
+.claude
+# Agentes y skills locales del editor: no se versionan
+.agents/
+.venv
+venv/
+env/
+.env
+.vscode/
+.idea/
+*.egg-info/
+.coverage
+htmlcov/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Modelos entrenados y logs de entrenamiento: se regeneran con python main.py
+artifacts/models/
+artifacts/tb/
+
+# artifacts/ (resto) SÍ se versiona: son los entregables de §3.8
+# data/Binance_BTCUSDT_1h.csv SÍ se versiona: main.py corre desde un clon sin descargas
