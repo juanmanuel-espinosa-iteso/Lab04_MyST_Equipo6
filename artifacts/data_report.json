@@ -1,0 +1,24 @@
+{
+  "rows_read": 75588,
+  "duplicates_removed": 506,
+  "off_hour_bars_floored": 43,
+  "bars": 75082,
+  "first_bar": "2017-08-17 04:00:00+00:00",
+  "last_bar": "2026-04-26 23:00:00+00:00",
+  "hours_in_range": 76196,
+  "missing_hours": 1114,
+  "missing_hours_by_year": {
+    "2017": 7,
+    "2018": 61,
+    "2019": 28,
+    "2020": 17,
+    "2021": 13,
+    "2023": 1,
+    "2025": 687,
+    "2026": 300
+  },
+  "missing_midnight_bars": 374,
+  "longest_gap_hours": 145,
+  "zero_volume_bars": 4,
+  "rows_stated_in_assignment": 75558
+}

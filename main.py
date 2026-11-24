@@ -5,13 +5,22 @@ datos y features → EDA → entrenamiento por fold → evaluación en prueba �
 aquí solo se definen los parámetros globales (semilla, rutas y folds) y el orden de las etapas.
 """
 
+import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parent
+# `code/` (obligatoria, §2.2) se llama igual que un módulo de la biblioteca estándar: se asegura el paquete local.
+sys.path.insert(0, str(ROOT))
+if not str(getattr(sys.modules.get("code"), "__file__", "")).startswith(str(ROOT)):
+    sys.modules.pop("code", None)
+
+from code import data  # noqa: E402
+
 SEED = 42
 
-ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 ARTIFACTS = ROOT / "artifacts"
 FIGURES = ROOT / "docs" / "figuras"
@@ -26,8 +35,25 @@ FOLDS = {
 }
 
 
+def write_json(obj, path):
+    """Escribe `obj` como JSON legible (UTF-8, sangría de 2)."""
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def run_data_stage():
-    """Parte 01: carga y valida el CSV, construye features causales y los folds (folds.json, data_report.json)."""
+    """Parte 01: carga y valida el CSV, calcula las features causales y describe los folds.
+
+    Escribe `artifacts/data_report.json` y `artifacts/folds.json`. Devuelve (ohlcv, features) sin normalizar; cada
+    etapa posterior arma su fold con `data.build_fold_dataset`, que ajusta el normalizador con el train de ese fold.
+    """
+    ohlcv, report = data.load_ohlcv(BTC_CSV)
+    features = data.compute_features(ohlcv)
+    write_json(report, ARTIFACTS / "data_report.json")
+    write_json(data.describe_folds(ohlcv, features, FOLDS), ARTIFACTS / "folds.json")
+    print(f"[datos] {report['bars']:,} barras ({report['first_bar'][:16]} a {report['last_bar'][:16]}); "
+          f"{report['duplicates_removed']} duplicados quitados; {report['missing_hours']:,} horas faltantes; "
+          f"{len(data.FEATURES)} features en {len(data.FEATURE_FAMILIES)} familias")
+    return ohlcv, features
 
 
 def run_eda_stage():
