@@ -37,6 +37,7 @@ REPETIR hasta que todo esté en [x]:
 - [ ] Métricas de §3.7 con media y desviación entre folds, contra ambos benchmarks con costos.
 - [ ] §3.9 (peores operaciones, mayor drawdown, correlación), §3.10 (fallas de producción) y las 7 preguntas con cifras propias.
 - [ ] Advertencia de interpretación y limitaciones explícitas.
+- [ ] Simulación visual del agente (`artifacts/agent_simulation.gif`), pedida por el profesor en clase.
 
 ## D. Código, pruebas y documentación (10)
 

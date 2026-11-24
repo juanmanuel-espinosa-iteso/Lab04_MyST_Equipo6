@@ -121,6 +121,7 @@ intermedias. `{k}` = 1, 2, 3, 4. Los marcados con † son obligatorios por §3.8
 | `sensitivity.csv` | sensitivity | resolución intrabarra (proporción afectada y cambio de resultado) y retraso de una barra en los datos (§3.3, §3.10, P6) |
 | `ablation.csv` | sensitivity | desempeño quitando cada familia de variables (P7) |
 | `algorithm_comparison.csv` | sensitivity | algoritmo principal contra el segundo (P7) |
+| `agent_simulation.gif` | evaluate (plots) | **simulación visual** pedida por el profesor (clase del 2026-11-23): animación del agente operando un tramo de prueba (precio, entradas y salidas con su razón, posición, stop y take-profit, capital), al estilo del pingüino de FrozenLake de la S18–S19; se construye solo con la bitácora y la curva de capital, sin recalcular |
 
 Si cambias el esquema de un artefacto, actualiza esta tabla **y** avisa al otro integrante.
 

@@ -37,5 +37,7 @@ Generación (como en el Lab 3): Markdown → HTML → PDF con Chrome sin interfa
 
 - [ ] ≤ 14 diapositivas + portada + cierre; reparto de tiempo entre ambos y ensayo cronometrado (10 min).
 - [ ] Cada gráfica sustenta un punto concreto; títulos, ejes y leyendas legibles desde el fondo del salón; sin capturas de código.
+- [ ] La simulación visual (`artifacts/agent_simulation.gif`, petición del profesor) se muestra en la presentación para
+      explicar cómo decide y cierra posiciones el agente.
 - [ ] Cierre con conclusiones definidas: ¿ventaja o artefacto de los supuestos?
 - [ ] Ambos pueden explicar cualquier parte y señalar dónde ocurre en el código (preguntas probables de cada guía).

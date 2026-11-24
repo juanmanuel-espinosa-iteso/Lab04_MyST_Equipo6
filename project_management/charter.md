@@ -11,7 +11,8 @@ EDA y análisis de features solo en entrenamiento; entorno Gymnasium validado co
 de Stable-Baselines3 con replay buffer semi-Markov, varias semillas y búsqueda de hiperparámetros en validación;
 walk-forward de 4 folds con prueba tocada una vez; métricas contra BTC buy-and-hold y S&P 500 con costos; análisis de
 operaciones, sensibilidad (intrabarra, retraso), ablación, segundo algoritmo y fallas de producción; 4+ pruebas con
-pytest; reporte, walkthrough y presentación en PDF; un notebook de demostración por parte.
+pytest; reporte, walkthrough y presentación en PDF; simulación visual animada del agente operando (petición del
+profesor); un notebook de demostración por parte.
 
 **No hará:** operación en vivo ni conexión a exchanges; datos externos de precio como features (el S&P 500 solo
 como benchmark); modelado del libro de órdenes, impacto de mercado o financiamiento de cortos más allá de los
