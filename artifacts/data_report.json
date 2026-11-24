@@ -20,5 +20,11 @@
   "missing_midnight_bars": 374,
   "longest_gap_hours": 145,
   "zero_volume_bars": 4,
-  "rows_stated_in_assignment": 75558
+  "microsecond_unix_rows": 672,
+  "microsecond_unix_range": [
+    "2025-02-12 00:00:00+00:00",
+    "2025-03-11 23:00:00+00:00"
+  ],
+  "rows_stated_in_assignment": 75558,
+  "row_count_note": "El enunciado menciona 75,558 registros. El archivo trae 75,588 filas de datos (sin la línea de la URL ni el encabezado), 30 más que el enunciado; ningún conteo natural da 75,558: hay 75,082 marcas de tiempo únicas y 76,196 horas en el rango. La diferencia con las barras únicas son 506 filas repetidas: de las 672 filas con Unix en microsegundos (2025-02-12 a 2025-03-11), 506 repiten una barra que también viene en milisegundos (OHLCV idéntico). Probablemente el conteo del enunciado viene de otra descarga del archivo; se usan las 75,082 barras únicas."
 }

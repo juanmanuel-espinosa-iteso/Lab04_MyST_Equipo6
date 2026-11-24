@@ -109,7 +109,8 @@ intermedias. `{k}` = 1, 2, 3, 4. Los marcados con † son obligatorios por §3.8
 | Archivo | Productor | Contenido |
 |---|---|---|
 | `folds.json` | data | fechas de corte de cada fold y número de barras por partición |
-| `data_report.json` | data | limpieza: filas leídas, duplicados, huecos horarios, orden, rango de fechas |
+| `data_report.json` | data | limpieza: filas leídas, duplicados, huecos horarios, orden, rango de fechas y por qué difiere de las 75,558 filas del enunciado |
+| `normalizer_fold_{k}.csv` | data | estadísticos del normalizador de cada fold (media, desviación, recorte y % de train recortado por feature), ajustados solo con su train |
 | `btcusdt_eda.pdf` † | eda (plots) | regímenes, distribución de rendimientos, autocorrelación (rendimientos y cuadrados), estacionariedad (ADF/KPSS), solo entrenamiento |
 | `regimes.csv` | eda | ≥ 4 regímenes del entrenamiento: fechas, volatilidad, tendencia, drawdown (pregunta 1) |
 | `feature_analysis_fold_{k}.csv` † | eda | por feature: información mutua y correlaciones con el objetivo, ADF, autocorrelación, solo train del fold |

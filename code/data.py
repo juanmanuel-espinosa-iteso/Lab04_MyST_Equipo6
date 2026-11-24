@@ -23,6 +23,7 @@ DRIFT_HALFLIFE = 168
 VOL_HALFLIFE = 24
 WARMUP_HOURS = 720
 CLIP_Z = 5.0
+ASSIGNMENT_ROWS = 75_558  # registros que menciona el enunciado (§3.1)
 
 FEATURE_FAMILIES = {
     "returns": [f"ret_{k}h" for k in RETURN_LAGS],
@@ -85,7 +86,18 @@ def load_ohlcv(path):
         "missing_midnight_bars": int((missing.hour == 0).sum()),
         "longest_gap_hours": int(df["gap_hours"].max()),
         "zero_volume_bars": int((df["volume_btc"] == 0).sum()),
-        "rows_stated_in_assignment": 75558,
+        "microsecond_unix_rows": int((raw["Unix"] >= 10**13).sum()),
+        "microsecond_unix_range": [str(stamps[raw["Unix"] >= 10**13].min()), str(stamps[raw["Unix"] >= 10**13].max())],
+        "rows_stated_in_assignment": ASSIGNMENT_ROWS,
+        "row_count_note": (
+            f"El enunciado menciona {ASSIGNMENT_ROWS:,} registros. El archivo trae {len(raw):,} filas de datos "
+            f"(sin la línea de la URL ni el encabezado), {len(raw) - ASSIGNMENT_ROWS} más que el enunciado; ningún "
+            f"conteo natural da {ASSIGNMENT_ROWS:,}: hay {len(df):,} marcas de tiempo únicas y {len(grid):,} horas en "
+            f"el rango. La diferencia con las barras únicas son {n_duplicates} filas repetidas: de las "
+            f"{int((raw['Unix'] >= 10**13).sum())} filas con Unix en microsegundos (2025-02-12 a 2025-03-11), "
+            f"{n_duplicates} repiten una barra que también viene en milisegundos (OHLCV idéntico). "
+            f"Probablemente el conteo del enunciado viene de otra descarga del archivo; se usan las {len(df):,} barras únicas."
+        ),
     }
     return df, report
 
@@ -125,10 +137,12 @@ def compute_features(ohlcv):
     Familias
     --------
     returns    : rendimiento log de 1, 4, 24 y 168 h.
-    volatility : desviación de rendimientos horarios a 24 y 168 h, Parkinson a 24 h y razón 24/168.
+    volatility : volatilidad realizada horaria (raíz de la media de r²/Δh) de 24 y 168 barras, Parkinson de 24
+                 barras y razón 24/168.
     trend      : distancia del cierre a su EMA de 24, 168 y 720 h; caída desde el máximo de 720 h.
     volume     : z-score del log-volumen en USDT contra 168 barras; razón del volumen medio 24/168 barras.
-    (Parkinson y volumen usan barras observadas, ver `_bar_features`; el resto, la malla horaria de reloj.)
+    (Volatilidad realizada, Parkinson y volumen usan barras observadas, ver `_bar_features`; el resto, la malla
+    horaria de reloj.)
     calendar   : hora del día y día de la semana en seno y coseno (BTC opera 24/7, pero la liquidez no es uniforme).
     belief     : creencia sobre la tendencia y el riesgo (componente B_t del estado): deriva μ̂ (EWMA de los rendimientos,
                  vida media 168 h), su error estándar σ̂/√n_eff, el cociente μ̂/se y la volatilidad EWMA de 24 h.
@@ -143,10 +157,6 @@ def compute_features(ohlcv):
     for k in RETURN_LAGS:
         f[f"ret_{k}h"] = log_close - log_close.shift(k)
 
-    for w in VOL_WINDOWS:
-        f[f"rv_{w}h"] = r.rolling(w, min_periods=w // 2).std()
-    f["vol_ratio_24_168"] = f["rv_24h"] / f["rv_168h"]
-
     for s in EMA_SPANS:
         f[f"ema_gap_{s}h"] = g["close"] / g["close"].ewm(span=s, adjust=True).mean() - 1
     f[f"drawdown_{DRAWDOWN_WINDOW}h"] = g["close"] / g["close"].rolling(DRAWDOWN_WINDOW, min_periods=DRAWDOWN_WINDOW).max() - 1
@@ -155,47 +165,66 @@ def compute_features(ohlcv):
     f["hour_sin"], f["hour_cos"] = np.sin(2 * np.pi * hour / 24), np.cos(2 * np.pi * hour / 24)
     f["dow_sin"], f["dow_cos"] = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
 
-    f = f.join(_belief_features(r)).loc[ohlcv.index]
+    f = f.loc[ohlcv.index].join(_belief_features(r, ohlcv))
     f = f.join(_bar_features(ohlcv))[FEATURES]
     f.iloc[:WARMUP_HOURS] = np.nan
     return f
 
 
 def _bar_features(ohlcv):
-    """Features de rango y volumen sobre las últimas k barras **observadas** (no sobre la malla de reloj).
+    """Features de volatilidad realizada, rango y volumen sobre las últimas k barras **observadas**.
 
     Una hora faltante no tiene máximo, mínimo ni volumen; con ventanas de reloj, después de un hueco largo (hasta
     145 h en 2025) estas features quedarían en NaN varios días y el agente no podría decidir. Con ventanas por barras
     observadas siguen definidas, a costa de cubrir un poco más de tiempo de reloj cuando hay huecos.
+
+    Volatilidad realizada: raíz de la media de r_i² / Δh_i, con r_i el rendimiento log entre barras observadas
+    consecutivas y Δh_i las horas entre ellas. Dividir entre Δh_i lleva el rendimiento que abarca un hueco a varianza
+    por hora (bajo rendimientos i.i.d.), así que los huecos no la sesgan. En la malla de reloj, cada hora faltante
+    contaba como rendimiento 0 y la volatilidad de 24 h salía ≈ 20 % más baja tras huecos de 24 h o más.
     """
+    hours_between = ohlcv["gap_hours"] + 1
+    r2_per_hour = np.log(ohlcv["close"]).diff().pow(2) / hours_between
     hl = np.log(ohlcv["high"] / ohlcv["low"]) ** 2 / (4 * np.log(2))
     log_volume = np.log1p(ohlcv["volume_usdt"])
     roll = log_volume.rolling(VOLUME_WINDOW)
     volume = ohlcv["volume_usdt"]
+    rv = {f"rv_{w}h": np.sqrt(r2_per_hour.rolling(w).mean()) for w in VOL_WINDOWS}
     return pd.DataFrame({
+        **rv,
+        "vol_ratio_24_168": rv["rv_24h"] / rv["rv_168h"],
         "parkinson_24h": np.sqrt(hl.rolling(24).mean()),
         f"volume_z_{VOLUME_WINDOW}h": (log_volume - roll.mean()) / roll.std(),
         "volume_ratio_24_168": np.log(volume.rolling(24).mean() / volume.rolling(168).mean()),
     })
 
 
-def _belief_features(r):
+def _belief_features(r, ohlcv):
     """Creencia sobre la deriva y la volatilidad, con su incertidumbre (aproximación normal, rendimientos i.i.d.).
 
-    μ̂_t = EWMA de r con vida media `DRIFT_HALFLIFE`; σ̂_t = raíz de la varianza EWMA con la misma vida media;
-    n_eff = (1 + λ) / (1 − λ) con λ = 0.5^(1/vida media) (tamaño efectivo de muestra de pesos geométricos);
-    se(μ̂_t) = σ̂_t / √n_eff. `belief_vol` es la volatilidad EWMA de vida media `VOL_HALFLIFE`.
+    μ̂_t = EWMA de los rendimientos horarios r de la malla con vida media `DRIFT_HALFLIFE` (una hora faltante vale 0 y
+    el rendimiento que abarca el hueco se cuenta una vez, así que la deriva por hora no se sesga).
+    Las varianzas son EWMA **en el tiempo** de r_i²/Δh_i sobre barras observadas (varianza por hora del rendimiento
+    entre barras consecutivas; `times=` con la vida media en horas de reloj), para que los huecos no las sesguen:
+    σ̂_t con vida media `DRIFT_HALFLIFE` y `belief_vol` con `VOL_HALFLIFE`.
+    n_eff = (1 + λ) / (1 − λ) con λ = 0.5^(1/vida media) (tamaño efectivo de muestra de pesos geométricos horarios);
+    se(μ̂_t) = σ̂_t / √n_eff.
     """
     lam = 0.5 ** (1 / DRIFT_HALFLIFE)
     n_eff = (1 + lam) / (1 - lam)
-    drift = r.ewm(halflife=DRIFT_HALFLIFE, adjust=True).mean()
-    sigma = np.sqrt(r.ewm(halflife=DRIFT_HALFLIFE, adjust=True).var(bias=False))
-    se = sigma / np.sqrt(n_eff)
+    drift = r.ewm(halflife=DRIFT_HALFLIFE, adjust=True).mean().loc[ohlcv.index]
+    r2_per_hour = np.log(ohlcv["close"]).diff().pow(2) / (ohlcv["gap_hours"] + 1)
+    times = ohlcv.index
+
+    def ewm_vol(halflife):
+        return np.sqrt(r2_per_hour.ewm(halflife=pd.Timedelta(hours=halflife), times=times).mean())
+
+    se = ewm_vol(DRIFT_HALFLIFE) / np.sqrt(n_eff)
     return pd.DataFrame({
         "belief_drift": drift,
         "belief_drift_se": se,
         "belief_drift_t": drift / se,
-        "belief_vol": np.sqrt(r.pow(2).ewm(halflife=VOL_HALFLIFE, adjust=True).mean()),
+        "belief_vol": ewm_vol(VOL_HALFLIFE),
     })
 
 
@@ -203,12 +232,18 @@ def forward_log_return(ohlcv, horizon):
     """Objetivo del análisis de features (parte 02): log(cierre en t + horizon h / apertura de la barra siguiente a t).
 
     **No es causal** y nunca entra al estado: mide lo que pasa después de la decisión tomada al cierre de t, con el
-    llenado en la apertura siguiente. Con horas faltantes usa el último cierre conocido en t + horizon.
+    llenado en la apertura siguiente. Con horas faltantes usa el último cierre conocido en t + horizon. Si la barra
+    siguiente empieza después de t + horizon (hueco más largo que el horizonte), la salida quedaría antes de la entrada:
+    esas filas son NaN, igual que la última barra.
+
+    Con la entrada en t + 1 equivale al rendimiento de una posición del entorno que sale por horizonte de `horizon` h.
     """
     g = _hourly_grid(ohlcv)
     entry = ohlcv["open"].shift(-1)
     exit_close = g["close"].shift(-horizon).reindex(ohlcv.index)
-    return np.log(exit_close / entry).rename(f"fwd_ret_{horizon}h")
+    next_bar = ohlcv.index.to_series().shift(-1)
+    valid = next_bar <= ohlcv.index.to_series() + pd.Timedelta(hours=horizon)
+    return np.log(exit_close / entry).where(valid).rename(f"fwd_ret_{horizon}h")
 
 
 def split_fold(df, fold_dates):
@@ -238,6 +273,16 @@ class Normalizer:
         """Aplica los estadísticos congelados (sin reajustar) y recorta a ±clip; devuelve float32."""
         z = (features[self.mean.index] - self.mean) / self.std
         return z.clip(-self.clip, self.clip).astype(np.float32)
+
+    def to_frame(self, train_features):
+        """Tabla de los estadísticos por feature (para `artifacts/normalizer_fold_{k}.csv`): media, desviación,
+        recorte y % de valores del train que el recorte toca."""
+        z = (train_features[self.mean.index] - self.mean) / self.std
+        return pd.DataFrame({
+            "family": [next(fam for fam, cols in FEATURE_FAMILIES.items() if name in cols) for name in self.mean.index],
+            "mean": self.mean, "std": self.std, "clip": self.clip,
+            "pct_train_clipped": 100 * (z.abs() > self.clip).mean(),
+        }).rename_axis("feature")
 
 
 @dataclass
