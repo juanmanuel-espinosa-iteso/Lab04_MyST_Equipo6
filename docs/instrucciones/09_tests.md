@@ -1,7 +1,7 @@
 # 09 — Pruebas (pytest)
 
 **Dueños:** cada quien las de su parte (ver `00_flujo_de_trabajo.md`) · **Revisor:** cruzado · **Carpeta:** `tests/`
-**Leer antes:** `docs/Lab04.pdf` §3.11
+**Leer antes:** `docs/Lab04.pdf` §3.11 · `docs/notas_clase/03_sb3_dqn_ppo.md` (§3, validación en tres niveles)
 
 ## Objetivo
 

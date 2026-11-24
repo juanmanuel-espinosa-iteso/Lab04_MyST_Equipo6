@@ -147,5 +147,5 @@ Si cambias el esquema de un artefacto, actualiza esta tabla **y** avisa al otro 
 
 - `docs/instrucciones/`: una guía por parte con pasos, checklist y criterio de terminado.
   `99_checklist_entrega.md` es la revisión final contra la rúbrica.
-- `docs/notas_clase/`: resumen de clase (Powell y S18). **Fuente de verdad para notación y enfoque.**
+- `docs/notas_clase/`: resumen de clase (Powell, S18 y S19). **Fuente de verdad para notación y enfoque.**
 - `docs/decisiones.md`: bitácora de decisiones de diseño.

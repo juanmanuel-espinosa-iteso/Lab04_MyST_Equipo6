@@ -36,7 +36,7 @@ normalizada por partición; con eso 03 y 04 avanzan aunque las features cambien 
 
 ## División del trabajo (50/50)
 
-Propuesta del 2026-11-23. JME = Juan Manuel Espinosa, GC = Gonzalo Cano. La asignación se copia en los roles de `charter.md`.
+Propuesta el 2026-11-23 y confirmada el 2026-11-24. JME = Juan Manuel Espinosa, GC = Gonzalo Cano. La asignación se copia en los roles de `charter.md`.
 
 | Parte | Dueño | Revisor (PR) | Notebook de demostración | Pruebas a su cargo |
 |---|---|---|---|---|

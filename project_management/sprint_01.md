@@ -12,7 +12,8 @@ del domingo 29 a las 23:59, revisado desde un clon limpio.
 |---|---|---|
 | Repo público, colaboradores, estructura, `requirements.txt`, `.gitignore`, `main.py` y README iniciales | JME | hecho |
 | Guías por parte (`docs/instrucciones/`), contrato de artefactos y bitácora de decisiones | JME | hecho |
-| Notas de clase: Powell (del Lab03) y resumen de la S18 | JME | hecho |
+| Notas de clase: Powell (del Lab03) y resumen de la S18 y la S19 | JME | hecho |
+| División del trabajo 50/50 confirmada (`00_flujo_de_trabajo.md`) | JME | hecho (2026-11-24) |
 | 01 Datos, features causales, folds y normalizador + prueba de causalidad | JME | pendiente |
 | 02 EDA, regímenes y análisis de features | GC | pendiente |
 | 03 Entorno semi-Markov + `check_env` + operación de referencia | JME | pendiente |

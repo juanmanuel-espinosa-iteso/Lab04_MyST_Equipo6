@@ -1,7 +1,7 @@
 # 03 — Entorno Gymnasium semi-Markov y gestor de posiciones
 
 **Dueño:** Juan Manuel Espinosa (JME) · **Revisor:** Gonzalo Cano (GC) · **Notebook:** `notebooks/03_entorno.ipynb` · **Módulo:** `code/env.py` · **Depende de:** 01 · **Alimenta a:** 04, 05, 06, 07
-**Leer antes:** `docs/notas_clase/02_rl_q_learning_gymnasium.md` (§5–6) · `docs/notas_clase/01_sequential_decision_analytics.md` · `docs/Lab04.pdf` §3.2 y §3.3
+**Leer antes:** `docs/notas_clase/02_rl_q_learning_gymnasium.md` (§5–6) · `docs/notas_clase/03_sb3_dqn_ppo.md` (§2, §3 y §7, plantilla del entorno) · `docs/notas_clase/01_sequential_decision_analytics.md` · `docs/Lab04.pdf` §3.2 y §3.3
 
 ## Objetivo
 

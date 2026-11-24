@@ -1,7 +1,7 @@
 # 05 — Entrenamiento con Stable-Baselines3: líneas base, semillas e hiperparámetros
 
 **Dueño:** Gonzalo Cano (GC) · **Revisor:** Juan Manuel Espinosa (JME) · **Notebook:** `notebooks/05_entrenamiento.ipynb` · **Módulo:** `code/train.py` (+ `code/plots.py` para las curvas) · **Depende de:** 01, 03, 04 · **Alimenta a:** 06, 07
-**Leer antes:** `docs/notas_clase/02_rl_q_learning_gymnasium.md` (§3–5) · `docs/Lab04.pdf` §3.5 y §3.6
+**Leer antes:** `docs/notas_clase/02_rl_q_learning_gymnasium.md` (§3–5) · `docs/notas_clase/03_sb3_dqn_ppo.md` (§4–6: DQN, PPO, `Monitor`, evaluación y semillas) · `docs/Lab04.pdf` §3.5 y §3.6
 
 ## Objetivo
 
