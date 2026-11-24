@@ -151,7 +151,7 @@ def compute_features(ohlcv):
         f[f"ema_gap_{s}h"] = g["close"] / g["close"].ewm(span=s, adjust=True).mean() - 1
     f[f"drawdown_{DRAWDOWN_WINDOW}h"] = g["close"] / g["close"].rolling(DRAWDOWN_WINDOW, min_periods=DRAWDOWN_WINDOW).max() - 1
 
-    hour, dow = g.index.hour, g.index.dayofweek
+    hour, dow = g.index.hour, g.index.day_of_week
     f["hour_sin"], f["hour_cos"] = np.sin(2 * np.pi * hour / 24), np.cos(2 * np.pi * hour / 24)
     f["dow_sin"], f["dow_cos"] = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
 
