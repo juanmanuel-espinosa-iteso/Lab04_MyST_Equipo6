@@ -70,7 +70,9 @@ valor, actualízala. Los marcados *por decidir* se fijan en su parte y se regist
 | Rutas (`DATA`, `ARTIFACTS`, `FIGURES`) y fechas de los folds (`FOLDS`) | — | `main.py` |
 | Archivo de datos | `data/Binance_BTCUSDT_1h.csv` (CryptoDataDownload, Binance, horario OHLCV) | `main.py` → `code/data.py` |
 | Costo de transacción | 0.125 % por lado (`COST_PER_SIDE = 0.00125`) | `code/env.py` |
-| Features y ventanas | por decidir (parte 01) | `code/data.py` |
+| Features y familias | 22 features en 6 familias (`FEATURE_FAMILIES`): rendimientos `RETURN_LAGS = (1, 4, 24, 168)`; volatilidad `VOL_WINDOWS = (24, 168)` + Parkinson 24; tendencia `EMA_SPANS = (24, 168, 720)` + `DRAWDOWN_WINDOW = 720`; volumen `VOLUME_WINDOW = 168`; calendario; creencia `DRIFT_HALFLIFE = 168`, `VOL_HALFLIFE = 24` | `code/data.py` |
+| Calentamiento / normalización | `WARMUP_HOURS = 720`; z-score con el train de cada fold, recortado a `CLIP_Z = 5` | `code/data.py` |
+| Horas faltantes | no se rellenan; `gap_hours` por barra (1,114 h, sobre todo 2025–2026) | `code/data.py` |
 | Acciones, horizonte H, stop-loss, take-profit | por decidir (parte 03) | `code/env.py` |
 | Resolución intrabarra | stop primero (`INTRABAR = "stop_first"`) | `code/env.py` |
 | Definición de episodio | por decidir (parte 03) | `code/env.py` |
