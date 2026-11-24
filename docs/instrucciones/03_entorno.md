@@ -34,26 +34,28 @@ REPETIR hasta cumplir el criterio de terminado:
 
 ## Checklist
 
-- [ ] **Espacio de acciones** y tratamiento de acciones inválidas (p. ej. {esperar, largo, corto}; decidir si hay corto
+- [x] **Espacio de acciones** y tratamiento de acciones inválidas (p. ej. {esperar, largo, corto}; decidir si hay corto
       y si hay cierre explícito, con evidencia). Registrar la alternativa descartada.
-- [ ] **Estado** = física (posición, precio de entrada, tiempo en posición, efectivo) + información (features de 01)
+- [x] **Estado** = física (posición, precio de entrada, tiempo en posición, efectivo) + información (features de 01)
       + creencia (estimado con incertidumbre). Observación `Box` float32 con la posición incluida (sin ella no es Markov).
-- [ ] Temporalidad: decisión con la barra t cerrada; llenado en la **apertura de t + 1**; el costo se cobra por lado
+- [x] Temporalidad: decisión con la barra t cerrada; llenado en la **apertura de t + 1**; el costo se cobra por lado
       (entrada y salida) sobre el nocional.
-- [ ] **Gestor de posiciones:** cierre en el primero de horizonte, stop-loss, take-profit o cierre explícito, recorriendo
+- [x] **Gestor de posiciones:** cierre en el primero de horizonte, stop-loss, take-profit o cierre explícito, recorriendo
       la trayectoria OHLC barra por barra.
-- [ ] **Resolución intrabarra:** si una barra toca stop y take-profit, `stop_first` por defecto; `tp_first` disponible
+- [x] **Resolución intrabarra:** si una barra toca stop y take-profit, `stop_first` por defecto; `tp_first` disponible
       para la parte 07. Gaps: si la apertura ya cruzó el nivel, se llena a la apertura (no al nivel).
-- [ ] **Semi-Markov:** cada `step` devuelve el estado al cierre y la duración real τ en `info["duration"]`; "esperar" avanza
+- [x] **Semi-Markov:** cada `step` devuelve el estado al cierre y la duración real τ en `info["duration"]`; "esperar" avanza
       una barra (τ = 1) o lo que se decida.
-- [ ] **Episodio:** definición explícita (p. ej. ventanas de longitud fija con inicio aleatorio en entrenamiento; recorrido
+- [x] **Episodio:** definición explícita (p. ej. ventanas de longitud fija con inicio aleatorio en entrenamiento; recorrido
       completo en orden en evaluación) y qué se pierde con ella; `terminated` solo por ruina, fin de datos = `truncated`.
-- [ ] Parámetros del periodo de tenencia (H, SL, TP) justificados con datos (p. ej. distribución de rangos/volatilidad
+- [x] Parámetros del periodo de tenencia (H, SL, TP) justificados con datos (p. ej. distribución de rangos/volatilidad
       a H horas en el train).
-- [ ] `test_env_check.py` (prueba obligatoria 1): `check_env` sin advertencias.
-- [ ] `test_reference_trade.py` (prueba obligatoria 3): trayectoria corta calculada a mano con razón de salida, duración
+- [x] `test_env_check.py` (prueba obligatoria 1): `check_env` sin advertencias.
+- [x] `test_reference_trade.py` (prueba obligatoria 3): trayectoria corta calculada a mano con razón de salida, duración
       y P&L conocidos, reproducida exactamente (un caso por razón de salida, incluido el empate intrabarra).
-- [ ] Validación de la clase: siempre largo en el entorno reproduce el rendimiento del activo menos costos (tolerancia de punto flotante).
+- [x] Validación de la clase: siempre largo en el entorno reproduce el rendimiento del activo menos costos (tolerancia de punto flotante).
+
+**Estado (2026-11-24, JME):** terminado en la rama `feat/jme-entorno` (sale de `feat/jme-datos`). El corto y la ausencia de cierre explícito quedaron decididos con evidencia en `decisiones.md`.
 
 ## Criterio de terminado
 
