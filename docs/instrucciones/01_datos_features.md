@@ -18,7 +18,7 @@ Ventanas de las features, lista de familias y método de normalización (z-score
 
 - **Lee:** `data/Binance_BTCUSDT_1h.csv` (primera línea = URL de CryptoDataDownload; orden descendente; columnas
   `Unix, Date, Symbol, Open, High, Low, Close, Volume BTC, Volume USDT, tradecount`).
-- **Escribe:** `artifacts/folds.json`, `artifacts/data_report.json`.
+- **Escribe:** `artifacts/folds.json`, `artifacts/data_report.json`, `artifacts/normalizer_fold_{1,2,3,4}.csv`.
 - **Expone:** `load_ohlcv(path) -> (DataFrame, report)`, `compute_features(ohlcv) -> DataFrame`,
   `FEATURE_FAMILIES` / `FEATURES`, `forward_log_return(ohlcv, horizon)`, `split_fold(df, fold_dates)`,
   `Normalizer.fit(train)` / `.transform(df)`, `build_fold_dataset(ohlcv, features, fold, fold_dates) -> FoldData`
@@ -53,7 +53,7 @@ REPETIR hasta cumplir el criterio de terminado:
 - [x] `test_causality.py` (prueba obligatoria 2): la observación reconstruida con datos hasta el índice i es igual a la
       calculada sobre la serie completa.
 
-**Estado (2026-11-24, JME):** terminado en la rama `feat/jme-datos`. El contenido final del estado se confirma con la evidencia de la parte 02.
+**Estado (2026-11-24, JME):** terminado en la rama `feat/jme-datos`; revisado por GC y corregidos sus 6 puntos (objetivo NaN con huecos, tramo de la prueba de causalidad, desviación del normalizador, estadísticos del normalizador en `artifacts/`, explicación de las 75,558 filas y volatilidades sin sesgo por horas faltantes). El contenido final del estado se confirma con la evidencia de la parte 02.
 
 ## Criterio de terminado
 
