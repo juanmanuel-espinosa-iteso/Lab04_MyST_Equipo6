@@ -242,11 +242,16 @@ class Normalizer:
 
 @dataclass
 class FoldData:
-    """Datos de un fold listos para el entorno: OHLCV crudo y features normalizadas, alineados por partición."""
+    """Datos de un fold listos para el entorno, alineados por partición.
+
+    `features` (normalizadas) son la observación del agente; `raw_features` (sin normalizar) las usa el entorno donde
+    importan las unidades (la volatilidad que fija las barreras) y la bitácora para reportar el estado en la entrada.
+    """
 
     fold: int
     ohlcv: dict
     features: dict
+    raw_features: dict
     normalizer: Normalizer
 
 
@@ -261,6 +266,7 @@ def build_fold_dataset(ohlcv, features, fold, fold_dates):
         fold=fold,
         ohlcv={name: ohlcv.loc[part.index] for name, part in parts.items()},
         features={name: normalizer.transform(part) for name, part in parts.items()},
+        raw_features=parts,
         normalizer=normalizer,
     )
 
