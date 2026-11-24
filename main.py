@@ -43,13 +43,17 @@ def write_json(obj, path):
 def run_data_stage():
     """Parte 01: carga y valida el CSV, calcula las features causales y describe los folds.
 
-    Escribe `artifacts/data_report.json` y `artifacts/folds.json`. Devuelve (ohlcv, features) sin normalizar; cada
-    etapa posterior arma su fold con `data.build_fold_dataset`, que ajusta el normalizador con el train de ese fold.
+    Escribe `artifacts/data_report.json`, `artifacts/folds.json` y los estadísticos del normalizador de cada fold
+    (`artifacts/normalizer_fold_{k}.csv`, ajustados solo con su train). Devuelve (ohlcv, features) sin normalizar;
+    cada etapa posterior arma su fold con `data.build_fold_dataset`, que reproduce esos mismos estadísticos.
     """
     ohlcv, report = data.load_ohlcv(BTC_CSV)
     features = data.compute_features(ohlcv)
     write_json(report, ARTIFACTS / "data_report.json")
     write_json(data.describe_folds(ohlcv, features, FOLDS), ARTIFACTS / "folds.json")
+    for k, dates in FOLDS.items():
+        train = data.split_fold(features, dates)["train"]
+        data.Normalizer.fit(train).to_frame(train).to_csv(ARTIFACTS / f"normalizer_fold_{k}.csv")
     print(f"[datos] {report['bars']:,} barras ({report['first_bar'][:16]} a {report['last_bar'][:16]}); "
           f"{report['duplicates_removed']} duplicados quitados; {report['missing_hours']:,} horas faltantes; "
           f"{len(data.FEATURES)} features en {len(data.FEATURE_FAMILIES)} familias")

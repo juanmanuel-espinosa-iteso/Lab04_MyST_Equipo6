@@ -23,6 +23,7 @@ DRIFT_HALFLIFE = 168
 VOL_HALFLIFE = 24
 WARMUP_HOURS = 720
 CLIP_Z = 5.0
+ASSIGNMENT_ROWS = 75_558  # registros que menciona el enunciado (§3.1)
 
 FEATURE_FAMILIES = {
     "returns": [f"ret_{k}h" for k in RETURN_LAGS],
@@ -85,7 +86,18 @@ def load_ohlcv(path):
         "missing_midnight_bars": int((missing.hour == 0).sum()),
         "longest_gap_hours": int(df["gap_hours"].max()),
         "zero_volume_bars": int((df["volume_btc"] == 0).sum()),
-        "rows_stated_in_assignment": 75558,
+        "microsecond_unix_rows": int((raw["Unix"] >= 10**13).sum()),
+        "microsecond_unix_range": [str(stamps[raw["Unix"] >= 10**13].min()), str(stamps[raw["Unix"] >= 10**13].max())],
+        "rows_stated_in_assignment": ASSIGNMENT_ROWS,
+        "row_count_note": (
+            f"El enunciado menciona {ASSIGNMENT_ROWS:,} registros. El archivo trae {len(raw):,} filas de datos "
+            f"(sin la línea de la URL ni el encabezado), {len(raw) - ASSIGNMENT_ROWS} más que el enunciado; ningún "
+            f"conteo natural da {ASSIGNMENT_ROWS:,}: hay {len(df):,} marcas de tiempo únicas y {len(grid):,} horas en "
+            f"el rango. La diferencia con las barras únicas son {n_duplicates} filas repetidas: de las "
+            f"{int((raw['Unix'] >= 10**13).sum())} filas con Unix en microsegundos (2025-02-12 a 2025-03-11), "
+            f"{n_duplicates} repiten una barra que también viene en milisegundos (OHLCV idéntico). "
+            f"Probablemente el conteo del enunciado viene de otra descarga del archivo; se usan las {len(df):,} barras únicas."
+        ),
     }
     return df, report
 
@@ -261,6 +273,16 @@ class Normalizer:
         """Aplica los estadísticos congelados (sin reajustar) y recorta a ±clip; devuelve float32."""
         z = (features[self.mean.index] - self.mean) / self.std
         return z.clip(-self.clip, self.clip).astype(np.float32)
+
+    def to_frame(self, train_features):
+        """Tabla de los estadísticos por feature (para `artifacts/normalizer_fold_{k}.csv`): media, desviación,
+        recorte y % de valores del train que el recorte toca."""
+        z = (train_features[self.mean.index] - self.mean) / self.std
+        return pd.DataFrame({
+            "family": [next(fam for fam, cols in FEATURE_FAMILIES.items() if name in cols) for name in self.mean.index],
+            "mean": self.mean, "std": self.std, "clip": self.clip,
+            "pct_train_clipped": 100 * (z.abs() > self.clip).mean(),
+        }).rename_axis("feature")
 
 
 @dataclass
