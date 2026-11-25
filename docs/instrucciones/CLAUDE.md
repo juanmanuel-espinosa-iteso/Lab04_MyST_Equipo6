@@ -72,6 +72,7 @@ valor, actualízala. Los marcados *por decidir* se fijan en su parte y se regist
 | Costo de transacción | 0.125 % por lado (`COST_PER_SIDE = 0.00125`) | `code/env.py` |
 | Features y familias | 22 features en 6 familias (`FEATURE_FAMILIES`): rendimientos `RETURN_LAGS = (1, 4, 24, 168)`; volatilidad `VOL_WINDOWS = (24, 168)` + Parkinson 24; tendencia `EMA_SPANS = (24, 168, 720)` + `DRAWDOWN_WINDOW = 720`; volumen `VOLUME_WINDOW = 168`; calendario; creencia `DRIFT_HALFLIFE = 168`, `VOL_HALFLIFE = 24` | `code/data.py` |
 | Calentamiento / normalización | `WARMUP_HOURS = 720`; z-score con el train de cada fold, recortado a `CLIP_Z = 5` | `code/data.py` |
+| Regímenes / análisis de features | giros de `REGIME_THRESHOLD = 0.45`; objetivo `TARGET_HORIZON = 24` h, muestra cada `SAMPLE_STEP = 25` barras, `N_PERMUTATIONS = 200` | `code/evaluate.py` |
 | Horas faltantes | no se rellenan; `gap_hours` por barra (1,114 h, sobre todo 2025–2026) | `code/data.py` |
 | Acciones, horizonte H, stop-loss, take-profit | por decidir (parte 03) | `code/env.py` |
 | Resolución intrabarra | stop primero (`INTRABAR = "stop_first"`) | `code/env.py` |
@@ -110,8 +111,8 @@ intermedias. `{k}` = 1, 2, 3, 4. Los marcados con † son obligatorios por §3.8
 | `data_report.json` | data | limpieza: filas leídas, duplicados, huecos horarios, orden, rango de fechas y por qué difiere de las 75,558 filas del enunciado |
 | `normalizer_fold_{k}.csv` | data | estadísticos del normalizador de cada fold (media, desviación, recorte y % de train recortado por feature), ajustados solo con su train |
 | `btcusdt_eda.pdf` † | eda (plots) | regímenes, distribución de rendimientos, autocorrelación (rendimientos y cuadrados), estacionariedad (ADF/KPSS), solo entrenamiento |
-| `regimes.csv` | eda | ≥ 4 regímenes del entrenamiento: fechas, volatilidad, tendencia, drawdown (pregunta 1) |
-| `feature_analysis_fold_{k}.csv` † | eda | por feature: información mutua y correlaciones con el objetivo, ADF, autocorrelación, solo train del fold |
+| `regimes.csv` | eda | ≥ 4 regímenes del train de cada fold (columna `fold`): fechas, volatilidad, tendencia, drawdown (pregunta 1) |
+| `feature_analysis_fold_{k}.csv` † | eda | por feature: información mutua y su nivel de azar, Pearson, Spearman con el objetivo y con su valor absoluto, ADF, KPSS y autocorrelación, solo train del fold |
 | `baselines.csv` | train | aleatorio, siempre largo y siempre plano con costos, por fold y partición |
 | `training_curves_fold_{k}.png` † | train (plots) | recompensa por episodio contra pasos, por semilla, con anotaciones |
 | `validation_results_fold_{k}.csv` † | train | cada configuración × semilla: métricas en validación y la elegida |
