@@ -23,7 +23,7 @@ experimentos de sensibilidad; dashboard; implementación propia de los algoritmo
 | Hito | Fecha objetivo | Responsable | Estado |
 |---|---|---|---|
 | Repo, estructura, guías, notas de clase y charter | 2026-11-23 | JME | hecho |
-| Datos, features causales, folds y normalizador (01) | 2026-11-24 | JME | pendiente |
+| Datos, features causales, folds y normalizador (01) | 2026-11-24 | JME | hecho |
 | EDA, regímenes y análisis de features (02) | 2026-11-24 | GC | pendiente |
 | Entorno con `check_env` y operación de referencia (03) | 2026-11-24 | JME | pendiente |
 | Contribución (04) | 2026-11-24 | GC | pendiente |

@@ -18,10 +18,11 @@ Ventanas de las features, lista de familias y método de normalización (z-score
 
 - **Lee:** `data/Binance_BTCUSDT_1h.csv` (primera línea = URL de CryptoDataDownload; orden descendente; columnas
   `Unix, Date, Symbol, Open, High, Low, Close, Volume BTC, Volume USDT, tradecount`).
-- **Escribe:** `artifacts/folds.json`, `artifacts/data_report.json`.
-- **Expone (propuesta):** `load_ohlcv(path) -> DataFrame`, `compute_features(ohlcv) -> DataFrame`,
-  `FEATURE_FAMILIES: dict[str, list[str]]`, `split_fold(df, fold) -> dict[str, DataFrame]`,
-  `fit_normalizer(train) -> Normalizer`, `Normalizer.transform(df)`, `build_fold_dataset(fold) -> FoldData`.
+- **Escribe:** `artifacts/folds.json`, `artifacts/data_report.json`, `artifacts/normalizer_fold_{1,2,3,4}.csv`.
+- **Expone:** `load_ohlcv(path) -> (DataFrame, report)`, `compute_features(ohlcv) -> DataFrame`,
+  `FEATURE_FAMILIES` / `FEATURES`, `forward_log_return(ohlcv, horizon)`, `split_fold(df, fold_dates)`,
+  `Normalizer.fit(train)` / `.transform(df)`, `build_fold_dataset(ohlcv, features, fold, fold_dates) -> FoldData`
+  (`.ohlcv[name]`, `.features[name]`, `.normalizer`), `describe_folds(...)`. `ohlcv` trae `gap_hours`.
 
 ## Loop de trabajo
 
@@ -35,22 +36,24 @@ REPETIR hasta cumplir el criterio de terminado:
 
 ## Checklist
 
-- [ ] Lectura del CSV: saltar la línea de la URL, ordenar ascendente, índice `datetime` en UTC, columnas en minúsculas.
-- [ ] Validación: duplicados, huecos horarios, precios > 0, `low ≤ open, close ≤ high`, índice ordenado. El enunciado
+- [x] Lectura del CSV: saltar la línea de la URL, ordenar ascendente, índice `datetime` en UTC, columnas en minúsculas.
+- [x] Validación: duplicados, huecos horarios, precios > 0, `low ≤ open, close ≤ high`, índice ordenado. El enunciado
       dice 75,558 registros y el archivo trae 75,588 filas de datos: explicar la diferencia en `data_report.json`.
-- [ ] Tratamiento de huecos documentado (no inventar barras con precios futuros; nunca back-fill).
-- [ ] Features **causales**, cada una calculable con barras hasta t inclusive (la decisión se toma al cierre de t y
+- [x] Tratamiento de huecos documentado (no inventar barras con precios futuros; nunca back-fill).
+- [x] Features **causales**, cada una calculable con barras hasta t inclusive (la decisión se toma al cierre de t y
       se ejecuta en la apertura de t + 1). Familias propuestas para la ablación: rendimientos rezagados, volatilidad
       (realizada, Parkinson / Garman–Klass), tendencia/momento, volumen y calendario (hora y día en seno/coseno).
-- [ ] Componente de **creencia** del estado (§3.2): lo estimado con su incertidumbre (p. ej. volatilidad o tendencia
+- [x] Componente de **creencia** del estado (§3.2): lo estimado con su incertidumbre (p. ej. volatilidad o tendencia
       estimada con su error estándar o una banda); se define junto con la parte 08.
-- [ ] Objetivo para el análisis de features: rendimiento futuro a horizonte H (lo usa la parte 02; **nunca** entra al estado).
-- [ ] Folds de §3.6 con fechas exactas en `main.py` y `artifacts/folds.json`; prueba 2026-01-01 a 2026-04-26 en el fold 4.
-- [ ] Calentamiento de las ventanas: las primeras barras con NaN se descartan dentro del entrenamiento, no se rellenan.
-- [ ] Normalizador ajustado **solo** con el entrenamiento de cada fold y aplicado sin cambios a validación y prueba;
+- [x] Objetivo para el análisis de features: rendimiento futuro a horizonte H (lo usa la parte 02; **nunca** entra al estado).
+- [x] Folds de §3.6 con fechas exactas en `main.py` y `artifacts/folds.json`; prueba 2026-01-01 a 2026-04-26 en el fold 4.
+- [x] Calentamiento de las ventanas: las primeras barras con NaN se descartan dentro del entrenamiento, no se rellenan.
+- [x] Normalizador ajustado **solo** con el entrenamiento de cada fold y aplicado sin cambios a validación y prueba;
       uno por fold, sus estadísticos guardados para el reporte.
-- [ ] `test_causality.py` (prueba obligatoria 2): la observación reconstruida con datos hasta el índice i es igual a la
+- [x] `test_causality.py` (prueba obligatoria 2): la observación reconstruida con datos hasta el índice i es igual a la
       calculada sobre la serie completa.
+
+**Estado (2026-11-24, JME):** terminado en la rama `feat/jme-datos`; revisado por GC y corregidos sus 6 puntos (objetivo NaN con huecos, tramo de la prueba de causalidad, desviación del normalizador, estadísticos del normalizador en `artifacts/`, explicación de las 75,558 filas y volatilidades sin sesgo por horas faltantes). El contenido final del estado se confirma con la evidencia de la parte 02.
 
 ## Criterio de terminado
 
