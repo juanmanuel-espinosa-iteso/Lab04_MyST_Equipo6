@@ -201,3 +201,157 @@ def feature_analysis(train_ohlcv, train_features, seed, n_permutations=N_PERMUTA
     table["acf_1"] = [train_features[c].autocorr(1) for c in table.index]
     table["n_samples"] = len(y)
     return table
+
+
+# ====================================================================== Parte 06: evaluación en prueba
+
+DAYS_PER_YEAR_CALENDAR = 365  # BTC opera 24/7; el S&P 500 se arrastra en fines de semana y feriados (mismo calendario)
+INITIAL_EQUITY = 1.0
+METRICS = ["total_return", "annual_return", "annual_volatility", "sharpe", "sortino", "max_drawdown", "calmar",
+           "hit_rate", "avg_trade_hours", "turnover", "n_trades"]
+
+
+def run_policy(trading_env, policy, seed):
+    """Corre `policy(obs) -> acción` en un entorno de evaluación hasta el fin de la partición.
+
+    Devuelve (equity, bitácora): la curva de capital valuada al cierre de cada barra y la bitácora de operaciones del
+    episodio. `policy` puede ser un modelo de SB3 (`lambda obs: model.predict(obs, deterministic=True)[0]`) o una
+    línea base. La prueba se recorre una sola vez por fold (§3.6).
+    """
+    obs, _ = trading_env.reset(seed=seed)
+    done = False
+    while not done:
+        obs, _, terminated, truncated, _ = trading_env.step(policy(obs))
+        done = terminated or truncated
+    return trading_env.equity_series(), trading_env.trade_log()
+
+
+def baseline_policies(n_actions, seed):
+    """Líneas base triviales de §3.5 como funciones `obs -> acción`: aleatorio (con su propio generador), siempre
+    largo y siempre plano."""
+    rng = np.random.default_rng(seed)
+    return {
+        "aleatorio": lambda obs: int(rng.integers(n_actions)),
+        "siempre_largo": lambda obs: 1,
+        "siempre_plano": lambda obs: 0,
+    }
+
+
+def buy_and_hold(prices, start, end, cost, entry=None):
+    """Benchmark de comprar y mantener con el mismo costo por lado que la estrategia.
+
+    `prices` es la serie de cierres (horaria para BTC, diaria para el S&P 500). Se compra en `entry` (por defecto el
+    primer cierre del periodo) pagando `cost` sobre el nocional, se valúa a mercado en cada cierre y se vende en el último
+    cierre del periodo pagando `cost`. Devuelve (equity, bitácora de una operación) con la misma contabilidad del entorno.
+    """
+    piece = prices.loc[start:end]
+    entry_price = piece.iloc[0] if entry is None else entry
+    qty = INITIAL_EQUITY / entry_price
+    entry_cost = cost * qty * entry_price
+    equity = INITIAL_EQUITY - entry_cost + qty * (piece - entry_price)
+    exit_cost = cost * qty * piece.iloc[-1]
+    equity.iloc[-1] -= exit_cost
+    gross = qty * (piece.iloc[-1] - entry_price)
+    log = pd.DataFrame([{
+        "entry_time": piece.index[0], "exit_time": piece.index[-1], "side": "largo", "exit_reason": "fin_periodo",
+        "entry_price": entry_price, "exit_price": piece.iloc[-1], "quantity": qty, "notional": qty * entry_price,
+        "gross_pnl": gross, "costs": entry_cost + exit_cost, "net_pnl": gross - entry_cost - exit_cost,
+        "equity_before": INITIAL_EQUITY, "duration_hours": (piece.index[-1] - piece.index[0]).total_seconds() / 3600,
+    }])
+    return equity.rename("equity"), log
+
+
+def daily_equity(equity, start, end):
+    """Capital al final de cada día calendario de [start, end] (último valor conocido; antes del inicio, el inicial).
+
+    Pone a la estrategia, BTC y el S&P 500 en el mismo calendario de 365 días: un día sin datos repite el último capital,
+    así que su rendimiento es 0.
+    """
+    days = pd.date_range(pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC"), freq="D")
+    eod = equity.groupby(equity.index.floor("D")).last()
+    return eod.reindex(days).ffill().fillna(INITIAL_EQUITY)
+
+
+def performance_metrics(equity_daily, trades):
+    """Métricas de §3.7 a partir del capital diario y la bitácora (tasa libre de riesgo 0, anualización con 365 días).
+
+    total_return = E_fin / E_ini − 1; annual_return = (1 + total)^(365/días) − 1; volatilidad, Sharpe y Sortino con
+    rendimientos diarios simples (Sortino con la semidesviación respecto a 0); max_drawdown = mín(E / máx previo − 1);
+    calmar = annual_return / |MDD|; hit_rate = % de operaciones con P&L neto > 0; avg_trade_hours = duración media;
+    turnover = nocional operado (entrada + salida) / capital medio, por año.
+    """
+    r = equity_daily.pct_change().dropna()
+    days = (equity_daily.index[-1] - equity_daily.index[0]).days or 1
+    years = days / DAYS_PER_YEAR_CALENDAR
+    start_value = equity_daily.iloc[0] if equity_daily.iloc[0] > 0 else INITIAL_EQUITY
+    total = equity_daily.iloc[-1] / start_value - 1
+    annual = (1 + total) ** (1 / years) - 1 if total > -1 else -1.0
+    vol = r.std() * np.sqrt(DAYS_PER_YEAR_CALENDAR)
+    downside = np.sqrt((np.minimum(r, 0) ** 2).mean()) * np.sqrt(DAYS_PER_YEAR_CALENDAR)
+    mean_annual = r.mean() * DAYS_PER_YEAR_CALENDAR
+    mdd = (equity_daily / equity_daily.cummax() - 1).min()
+    n_trades = len(trades)
+    traded = (trades["notional"] + trades["quantity"] * trades["exit_price"]).sum() if n_trades else 0.0
+    return pd.Series({
+        "total_return": total, "annual_return": annual, "annual_volatility": vol,
+        "sharpe": mean_annual / vol if vol > 0 else np.nan,
+        "sortino": mean_annual / downside if downside > 0 else np.nan,
+        "max_drawdown": mdd, "calmar": annual / abs(mdd) if mdd < 0 else np.nan,
+        "hit_rate": (trades["net_pnl"] > 0).mean() if n_trades else np.nan,
+        "avg_trade_hours": trades["duration_hours"].mean() if n_trades else np.nan,
+        "turnover": traded / equity_daily.mean() / years, "n_trades": n_trades,
+    })
+
+
+def add_alpha(table, benchmarks=("btc_buy_hold", "sp500")):
+    """Agrega, por fold, el rendimiento anualizado en exceso de cada estrategia sobre cada benchmark (alfa simple).
+
+    `table` tiene índice (fold, estrategia) y la columna `annual_return`.
+    """
+    out = table.copy()
+    for bench in benchmarks:
+        bench_return = out.xs(bench, level="strategy")["annual_return"]
+        out[f"alpha_vs_{bench}"] = out["annual_return"] - bench_return.reindex(out.index.get_level_values("fold")).to_numpy()
+    return out
+
+
+def aggregate_folds(table):
+    """Media y desviación estándar entre folds de cada métrica, por estrategia (§3.6: los resultados de prueba se
+    reportan agregados). Devuelve filas con índice (`media` | `desv`, estrategia)."""
+    grouped = table.groupby(level="strategy")
+    return pd.concat({"media": grouped.mean(), "desv": grouped.std()}, names=["fold"])
+
+
+# ---------------------------------------------------------------------- análisis de operaciones (§3.9)
+
+def worst_trades(trade_logs, raw_features, n=3):
+    """Las `n` operaciones de prueba con mayor pérdida neta entre todos los folds, con las variables de estado (sin
+    normalizar) en el momento de la decisión. `trade_logs` y `raw_features` son dicts fold -> DataFrame."""
+    rows = []
+    for k, log in trade_logs.items():
+        if len(log):
+            log = log.assign(fold=k, net_return=log["net_pnl"] / log["equity_before"])
+            state = raw_features[k].reindex(log["decision_time"]).reset_index(drop=True).add_prefix("state_")
+            rows.append(pd.concat([log.reset_index(drop=True), state], axis=1))
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True).nsmallest(n, "net_return")
+
+
+def max_drawdown_window(equity):
+    """Periodo del mayor drawdown de una curva de capital: (máximo previo, fondo, recuperación o None) y su tamaño."""
+    drawdown = equity / equity.cummax() - 1
+    trough = drawdown.idxmin()
+    peak = equity.loc[:trough].idxmax()
+    recovered = equity.loc[trough:][equity.loc[trough:] >= equity.loc[peak]]
+    return {"peak": peak, "trough": trough, "recovery": recovered.index[0] if len(recovered) else None,
+            "max_drawdown": float(drawdown.min())}
+
+
+def return_correlation(equity_daily, btc_daily):
+    """Correlación y beta de los rendimientos diarios del agente contra los de BTC (§3.9.3). Una correlación alta
+    sugiere que el agente es un largo filtrado o apalancado de BTC; una beta cercana a 1, que replica el activo."""
+    a, b = equity_daily.pct_change().dropna(), btc_daily.pct_change().dropna()
+    a, b = a.align(b, join="inner")
+    beta = np.cov(a, b)[0, 1] / b.var() if b.var() > 0 else np.nan
+    return {"correlation": float(a.corr(b)), "beta": float(beta), "n_days": int(len(a))}
