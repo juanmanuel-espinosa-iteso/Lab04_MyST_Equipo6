@@ -19,7 +19,7 @@ del domingo 29 a las 23:59, revisado desde un clon limpio.
 | 03 Entorno semi-Markov + `check_env` + operación de referencia | JME | hecho (2026-11-24, rama `feat/jme-entorno`) |
 | 04 Contribución + prueba de la recompensa | GC | pendiente |
 | 05 Entrenamiento: líneas base, semillas, búsqueda de HP | GC | pendiente |
-| 06 Evaluación, benchmarks, bitácora + identidad contable | JME | pendiente |
+| 06 Evaluación, benchmarks, bitácora + identidad contable | JME | maquinaria hecha (2026-11-25, rama `feat/jme-evaluacion`); falta correrla con el agente de la 05 |
 | 07 Sensibilidad (JME), ablación y segundo algoritmo (GC) | ambos | pendiente |
 | 08 Formulación de Powell | ambos | pendiente |
 | 10 Reporte, walkthrough y presentación | ambos | pendiente |
