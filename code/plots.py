@@ -239,3 +239,79 @@ def write_eda_pdf(path, figures_dir, ohlcv, features, folds, regimes, analyses):
             if name != "eda_resumen":
                 fig.savefig(figures_dir / f"{name}.png", dpi=150, metadata={"Software": None})
             plt.close(fig)
+
+
+# ====================================================================== Parte 06: evaluación en prueba
+
+STRATEGY_STYLE = {
+    "agente": dict(color=BLUE, lw=1.8, label="Agente"),
+    "btc_buy_hold": dict(color=ORANGE, lw=1.3, label="Comprar y mantener BTC"),
+    "sp500": dict(color=AQUA, lw=1.3, label="S&P 500"),
+    "siempre_largo": dict(color=MUTED, lw=0.9, ls="--", label="Siempre largo (24 h)"),
+    "aleatorio": dict(color="#b0b0b0", lw=0.9, ls=":", label="Aleatorio"),
+    "siempre_plano": dict(color="#b0b0b0", lw=0.9, ls="-.", label="Siempre plano"),
+}
+
+
+def plot_equity_curves(daily_curves, fold, test_dates, path):
+    """`equity_curves_test_fold_{k}.png`: capital diario de cada estrategia en la prueba del fold (inicial = 1), con
+    ambos benchmarks; escala log para comparar rendimientos relativos."""
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for name, curve in daily_curves.items():
+            ax.plot(curve.index, curve.to_numpy(), **STRATEGY_STYLE.get(name, dict(label=name)))
+        ax.axhline(1.0, color=INK, lw=0.6)
+        ax.set_yscale("log")
+        plain = matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:.2f}")
+        ax.yaxis.set_major_formatter(plain)
+        ax.yaxis.set_minor_formatter(plain)
+        ax.set_title(f"Fold {fold}: capital en prueba ({test_dates[0]} a {test_dates[1]}), con costos de 0.125 % por lado")
+        ax.set_ylabel("capital (inicial = 1, escala log)")
+        ax.set_xlabel("fecha (UTC)")
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=len(daily_curves), fontsize=8)
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+
+
+def plot_drawdown_period(ohlcv, trades, equity, window, fold, path, pad_days=3, max_markers=60):
+    """`max_drawdown_fold_{k}.png` (§3.9.2): precio y acciones del agente durante su mayor drawdown en prueba, desde unos
+    días antes del máximo previo hasta la recuperación (o el fondo, si no se recupera).
+
+    Cada operación se sombrea mientras está abierta (verde = largo, naranja = corto); con pocas operaciones también se
+    marcan entradas (▲/▼) y salidas (×). Líneas verticales: máximo previo y fondo del capital. Abajo, el capital a mercado.
+    """
+    start = window["peak"] - pd.Timedelta(days=pad_days)
+    end = (window["recovery"] or window["trough"]) + pd.Timedelta(days=pad_days)
+    price = ohlcv.loc[start:end, "close"]
+    inside = trades[(trades["exit_time"] >= start) & (trades["entry_time"] <= end)]
+    with plt.rc_context(STYLE):
+        fig, (ax, ax_eq) = plt.subplots(2, 1, figsize=(10, 6.5), sharex=True, gridspec_kw={"height_ratios": [2, 1]})
+        for _, trade in inside.iterrows():
+            ax.axvspan(trade["entry_time"], trade["exit_time"], color=AQUA if trade["side"] == "largo" else ORANGE,
+                       alpha=0.18, lw=0)
+        ax.plot(price.index, price.to_numpy(), color=INK, lw=0.8)
+        if len(inside) <= max_markers:
+            for side, marker, color in (("largo", "^", AQUA), ("corto", "v", ORANGE)):
+                entries = inside[inside["side"] == side]
+                ax.scatter(entries["entry_time"], entries["entry_price"], marker=marker, color=color, s=30, zorder=3)
+            ax.scatter(inside["exit_time"], inside["exit_price"], marker="x", color=BLUE, s=22, zorder=3)
+        for axis in (ax, ax_eq):
+            for moment in (window["peak"], window["trough"]):
+                axis.axvline(moment, color=MUTED, lw=0.8, ls="--")
+        handles = [Line2D([], [], color=INK, lw=0.8, label="cierre BTCUSDT"),
+                   Patch(color=AQUA, alpha=0.35, label="en largo"), Patch(color=ORANGE, alpha=0.35, label="en corto"),
+                   Line2D([], [], color=MUTED, ls="--", lw=0.8, label="máximo previo y fondo del capital")]
+        ax.legend(handles=handles, loc="upper left", fontsize=7, ncol=4)
+        n_long, n_short = int((inside["side"] == "largo").sum()), int((inside["side"] == "corto").sum())
+        ax.set_title(f"Fold {fold}: mayor drawdown en prueba ({window['max_drawdown']:.1%}); "
+                     f"{len(inside)} operaciones ({n_long} largos, {n_short} cortos)")
+        ax.set_ylabel("USDT")
+        curve = equity.loc[start:end]
+        ax_eq.plot(curve.index, curve.to_numpy(), color=BLUE, lw=1.0)
+        ax_eq.set_ylabel("capital del agente")
+        ax_eq.set_xlabel("fecha (UTC)")
+        ax_eq.set_title("Capital a mercado")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+        plt.close(fig)

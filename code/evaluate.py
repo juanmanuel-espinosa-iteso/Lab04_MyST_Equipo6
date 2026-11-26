@@ -355,3 +355,49 @@ def return_correlation(equity_daily, btc_daily):
     a, b = a.align(b, join="inner")
     beta = np.cov(a, b)[0, 1] / b.var() if b.var() > 0 else np.nan
     return {"correlation": float(a.corr(b)), "beta": float(beta), "n_days": int(len(a))}
+
+
+# ---------------------------------------------------------------------- orquestación por fold
+
+AGENT = "agente"
+BENCHMARKS = ("btc_buy_hold", "sp500")
+
+
+def evaluate_test_fold(fold_data, policies, sp500, test_dates, seed, cost):
+    """Evalúa en la prueba de un fold cada política de `policies` (nombre -> `obs -> acción`) y los dos benchmarks.
+
+    La recompensa no interviene en la evaluación (solo la contabilidad), así que el entorno usa una contribución nula.
+    Devuelve un dict con, por estrategia, el capital horario (`equity`), el diario (`daily`) y la bitácora (`trades`).
+    """
+    from code import env
+
+    start, end = test_dates
+    out = {}
+    for name, policy in policies.items():
+        trading_env = env.make_env(fold_data, "test", lambda outcome: 0.0, mode="eval", cost=cost)
+        equity, log = run_policy(trading_env, policy, seed)
+        out[name] = {"equity": equity, "daily": daily_equity(equity, start, end), "trades": log}
+    btc = fold_data.ohlcv["test"]
+    equity, log = buy_and_hold(btc["close"], btc.index[0], btc.index[-1], cost, entry=btc["open"].iloc[0])
+    out["btc_buy_hold"] = {"equity": equity, "daily": daily_equity(equity, start, end), "trades": log}
+    equity, log = buy_and_hold(sp500, start, end, cost)
+    out["sp500"] = {"equity": equity, "daily": daily_equity(equity, start, end), "trades": log}
+    return out
+
+
+def metrics_table(results_by_fold):
+    """`metrics_summary`: métricas por (fold, estrategia) con alfa, seguidas de la media y la desviación entre folds."""
+    rows = {(k, name): performance_metrics(res["daily"], res["trades"])
+            for k, results in results_by_fold.items() for name, res in results.items()}
+    per_fold = add_alpha(pd.DataFrame(rows).T.rename_axis(["fold", "strategy"]))
+    return pd.concat([per_fold, aggregate_folds(per_fold)])
+
+
+def trade_analysis(results_by_fold, raw_test_features, btc_daily_by_fold, n=3):
+    """Análisis de §3.9 del agente: peores operaciones, mayor drawdown por fold y correlación con BTC por fold."""
+    logs = {k: res[AGENT]["trades"] for k, res in results_by_fold.items()}
+    worst = worst_trades(logs, raw_test_features, n)
+    drawdowns = {k: max_drawdown_window(res[AGENT]["equity"]) for k, res in results_by_fold.items()}
+    worst_fold = min(drawdowns, key=lambda k: drawdowns[k]["max_drawdown"])
+    correlation = {k: return_correlation(res[AGENT]["daily"], btc_daily_by_fold[k]) for k, res in results_by_fold.items()}
+    return {"worst_trades": worst, "drawdowns": drawdowns, "worst_drawdown_fold": worst_fold, "correlation": correlation}
