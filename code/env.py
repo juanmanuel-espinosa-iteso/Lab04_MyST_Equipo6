@@ -96,6 +96,8 @@ class TradingEnv(gym.Env):
         self.mode, self.horizon, self.k_stop, self.k_take = mode, horizon_hours, k_stop, k_take
         self.intrabar, self.episode_bars, self.obs_lag, self.cost = intrabar, episode_bars, obs_lag, cost
         self.n = len(ohlcv)
+        self.trades, self.equity_curve = [], []
+        self.finished_trades = self.finished_curve = None
 
         self.action_space = spaces.Discrete(3 if allow_short else 2)
         n_obs = self.features.shape[1] + len(ACCOUNT_FEATURES)
@@ -134,6 +136,9 @@ class TradingEnv(gym.Env):
         truncated = bool((not terminated) and self.t >= self.end)
         info.update(duration=float(self.hours[self.t] - self.hours[t0]), decision_time=self.index[t0],
                     equity=self.equity, outcome=outcome)
+        if terminated or truncated:
+            # Se guarda el episodio terminado: un VecEnv de SB3 llama reset() en automático y borraría la bitácora.
+            self.finished_trades, self.finished_curve = list(self.trades), list(self.equity_curve)
         return self._obs(), reward, terminated, truncated, info
 
     # ------------------------------------------------------------------ transición
@@ -143,18 +148,19 @@ class TradingEnv(gym.Env):
         self.t += 1
         self._mark(self.t, self.equity)
         tau = self.hours[self.t] - self.hours[self.t - 1]
-        outcome = TradeOutcome(0, tau, 0.0, 0.0, 0.0, 0.0, float(self.barrier_vol[self.t - 1]))
+        outcome = TradeOutcome(0, tau, 0.0, 0.0, 0.0, 0.0, float(self.barrier_vol[self.t - 1 - self.obs_lag]))
         return outcome, {"exit_reason": ""}
 
     def _trade(self, side):
         """Abre en la apertura de t + 1 y deja que el gestor cierre la posición; actualiza capital y bitácora."""
         t, entry_bar = self.t, self.t + 1
         entry_price = self.open[entry_bar]
-        vol = float(self.barrier_vol[t])
+        vol = float(self.barrier_vol[t - self.obs_lag])  # la misma información (retrasada) que la observación
         stop, take = barrier_levels(entry_price, side, vol, self.horizon, self.k_stop, self.k_take)
-        exit_bar, exit_price, reason, ambiguous = resolve_exit(
-            self.open, self.high, self.low, self.close, self.hours, entry_bar, side, stop, take,
-            self.horizon, self.intrabar, last_bar=self.n - 1)
+        exit_ = resolve_exit(self.open, self.high, self.low, self.close, self.hours, entry_bar, side, stop, take,
+                             self.horizon, self.intrabar, last_bar=self.n - 1)
+        exit_bar, exit_price, reason = exit_.bar, exit_.price, exit_.reason
+        held_to_close = 0 if exit_.at_open else 1
 
         equity_before = self.equity
         qty = equity_before / entry_price
@@ -177,8 +183,9 @@ class TradingEnv(gym.Env):
             "exit_price": exit_price, "stop_level": stop, "take_level": take, "quantity": qty,
             "notional": qty * entry_price, "gross_pnl": gross, "costs": costs, "net_pnl": net,
             "equity_before": equity_before, "equity_after": self.equity,
-            "duration_hours": self.hours[exit_bar] - self.hours[entry_bar] + 1, "bars_held": exit_bar - entry_bar + 1,
-            "intrabar_ambiguous": ambiguous, "entry_vol": vol,
+            "duration_hours": self.hours[exit_bar] - self.hours[entry_bar] + held_to_close,
+            "bars_held": exit_bar - entry_bar + held_to_close,
+            "exit_at_open": exit_.at_open, "intrabar_ambiguous": exit_.ambiguous, "entry_vol": vol,
         }
         if self.mode == "eval":
             self.trades.append(record)
@@ -209,12 +216,14 @@ class TradingEnv(gym.Env):
             self._mark(bar, equity_before - entry_cost + side * qty * (self.close[bar] - entry_price))
 
     def trade_log(self):
-        """Bitácora de operaciones del episodio de evaluación como DataFrame."""
-        return pd.DataFrame(self.trades)
+        """Bitácora del último episodio de evaluación **terminado** como DataFrame (sobrevive al reset automático de
+        un VecEnv); si todavía no termina ninguno, la del episodio en curso."""
+        return pd.DataFrame(self.finished_trades if self.finished_trades is not None else self.trades)
 
     def equity_series(self):
-        """Curva de capital (valuada al cierre de cada barra) del episodio de evaluación."""
-        times, values = zip(*self.equity_curve)
+        """Curva de capital (valuada al cierre de cada barra) del mismo episodio que `trade_log`."""
+        curve = self.finished_curve if self.finished_curve is not None else self.equity_curve
+        times, values = zip(*curve)
         return pd.Series(values, index=pd.DatetimeIndex(times), name="equity")
 
 
@@ -230,37 +239,61 @@ def barrier_levels(entry_price, side, vol, horizon_hours, k_stop, k_take):
     return stop, take
 
 
-def resolve_exit(open_, high, low, close, hours, entry_bar, side, stop, take, horizon_hours, intrabar, last_bar):
-    """Recorre la trayectoria OHLC desde la barra de entrada y devuelve (barra, precio, razón, ambigua).
+@dataclass
+class Exit:
+    """Salida resuelta por el gestor: barra, precio, razón, si fue ambigua dentro de la barra y si se llenó a la
+    apertura de la barra (gap o horizonte vencido dentro de un hueco) en lugar de durante o al cierre de ella."""
 
-    En cada barra j (la de entrada incluida, que abre al precio de entrada):
+    bar: int
+    price: float
+    reason: str
+    ambiguous: bool = False
+    at_open: bool = False
+
+
+def _gap_exit(open_, j, side, stop, take, horizon_reason=None):
+    """Salida a la apertura de la barra j si abre más allá de un nivel; si no y `horizon_reason`, sale igual ahí."""
+    if side * (open_[j] - stop) <= 0:
+        return Exit(j, open_[j], "stop", at_open=True)
+    if side * (open_[j] - take) >= 0:
+        return Exit(j, open_[j], "take_profit", at_open=True)
+    return Exit(j, open_[j], horizon_reason, at_open=True) if horizon_reason else None
+
+
+def resolve_exit(open_, high, low, close, hours, entry_bar, side, stop, take, horizon_hours, intrabar, last_bar):
+    """Recorre la trayectoria OHLC desde la barra de entrada y devuelve la `Exit`.
+
+    En cada barra j que empieza antes de entrada + H horas (la de entrada incluida, que abre al precio de entrada):
     - si j > entrada y la apertura ya cruzó un nivel (gap, incluidas horas faltantes), se llena a la apertura;
     - si el mínimo/máximo toca un solo nivel, se llena al nivel;
     - si toca ambos, decide `intrabar` y la operación se marca como ambigua.
-    Si nada se toca, sale al cierre de la última barra que empieza antes de entrada + H horas; si los datos se
-    acaban antes, sale al cierre de `last_bar` con razón `fin_datos`.
+    Si nada se toca:
+    - si la última de esas barras cierra justo en entrada + H, sale a ese cierre (`horizonte`);
+    - si el horizonte vence **dentro de un hueco** de datos, sale a la apertura de la primera barra posterior (revisando
+      ahí stop y take-profit): al cierre de la barra previa al hueco todavía no se sabe que van a faltar barras, así que
+      salir ahí sería look-ahead;
+    - si los datos se acaban antes, sale al cierre de `last_bar` (`fin_datos`).
     """
     deadline = hours[entry_bar] + horizon_hours
     j = entry_bar
     while j <= last_bar and hours[j] < deadline:
-        if j > entry_bar:
-            if side * (open_[j] - stop) <= 0:
-                return j, open_[j], "stop", False
-            if side * (open_[j] - take) >= 0:
-                return j, open_[j], "take_profit", False
+        if j > entry_bar and (gap := _gap_exit(open_, j, side, stop, take)):
+            return gap
         adverse, favorable = (low[j], high[j]) if side == 1 else (high[j], low[j])
         hit_stop = side * (adverse - stop) <= 0
         hit_take = side * (favorable - take) >= 0
         if hit_stop and hit_take:
-            return (j, stop, "stop", True) if intrabar == "stop_first" else (j, take, "take_profit", True)
+            return Exit(j, stop, "stop", True) if intrabar == "stop_first" else Exit(j, take, "take_profit", True)
         if hit_stop:
-            return j, stop, "stop", False
+            return Exit(j, stop, "stop")
         if hit_take:
-            return j, take, "take_profit", False
+            return Exit(j, take, "take_profit")
         j += 1
     if j > last_bar:
-        return last_bar, close[last_bar], "fin_datos", False
-    return j - 1, close[j - 1], "horizonte", False
+        return Exit(last_bar, close[last_bar], "fin_datos")
+    if hours[j - 1] + 1 >= deadline:
+        return Exit(j - 1, close[j - 1], "horizonte")
+    return _gap_exit(open_, j, side, stop, take, horizon_reason="horizonte")
 
 
 def make_env(fold_data, split, reward_fn, **params):

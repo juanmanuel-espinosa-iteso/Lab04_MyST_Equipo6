@@ -17,6 +17,9 @@ from code import env
 
 COST = 0.00125
 CALM = (100.0, 101.0, 99.0, 100.0)  # barra que no toca ninguna barrera
+# Barra de decisión: cierra en 99.6 y la siguiente abre en 100, así que una entrada al cierre de t (look-ahead) y
+# una a la apertura de t + 1 dan P&L distintos y las pruebas los distinguen.
+DECISION = (100.0, 101.0, 99.0, 99.6)
 
 
 def make_env(bars, hours=None, intrabar="stop_first"):
@@ -39,21 +42,29 @@ def expected_net(side, entry, exit_):
 
 CASES = {
     # nombre: (barras, horas, lado, acción, barra de salida, precio de salida, razón, duración en h, ambigua)
-    "take_profit_largo": ([CALM, CALM, (100.5, 102.5, 100.0, 102.0), CALM, CALM, CALM], None,
+    "take_profit_largo": ([DECISION, CALM, (100.5, 102.5, 100.0, 102.0), CALM, CALM, CALM], None,
                           1, env.LONG, 2, 102.0, "take_profit", 2, False),
-    "stop_largo": ([CALM, CALM, (100.0, 100.8, 97.5, 98.5), CALM, CALM, CALM], None,
+    "stop_largo": ([DECISION, CALM, (100.0, 100.8, 97.5, 98.5), CALM, CALM, CALM], None,
                    1, env.LONG, 2, 98.0, "stop", 2, False),
-    "horizonte": ([CALM, CALM, CALM, CALM, (100.0, 101.0, 99.0, 100.7), CALM], None,
+    "horizonte": ([DECISION, CALM, CALM, CALM, (100.0, 101.0, 99.0, 100.7), CALM], None,
                   1, env.LONG, 4, 100.7, "horizonte", 4, False),
-    "gap_en_apertura": ([CALM, CALM, (97.0, 97.5, 96.0, 97.2), CALM, CALM, CALM], None,
-                        1, env.LONG, 2, 97.0, "stop", 2, False),
-    "take_profit_corto": ([CALM, CALM, (99.0, 99.5, 97.9, 98.2), CALM, CALM, CALM], None,
+    # La barra 2 abre en 97, debajo del stop (98): se llena a la apertura, así que estuvo 1 h en posición.
+    "gap_en_apertura": ([DECISION, CALM, (97.0, 97.5, 96.0, 97.2), CALM, CALM, CALM], None,
+                        1, env.LONG, 2, 97.0, "stop", 1, False),
+    # Entrada en la hora 1, horizonte en la hora 5; faltan las horas 3 a 6. Al cierre de la barra de la hora 2 no se
+    # sabe que vienen huecos: se sale a la apertura de la primera barra posterior (hora 7), con 6 h en posición.
+    "horizonte_en_hueco": ([DECISION, CALM, CALM, (100.9, 101.5, 100.2, 101.0), CALM], [0, 1, 2, 7, 8],
+                           1, env.LONG, 3, 100.9, "horizonte", 6, False),
+    # Igual, pero la primera barra después del hueco abre más allá del take-profit (102): sale ahí, a la apertura.
+    "take_profit_tras_hueco": ([DECISION, CALM, CALM, (102.3, 103.0, 101.8, 102.5), CALM], [0, 1, 2, 7, 8],
+                               1, env.LONG, 3, 102.3, "take_profit", 6, False),
+    "take_profit_corto": ([DECISION, CALM, (99.0, 99.5, 97.9, 98.2), CALM, CALM, CALM], None,
                           -1, env.SHORT, 2, 98.0, "take_profit", 2, False),
     # Falta la hora 3: el horizonte es de reloj (entrada en la hora 1 → última barra que empieza antes de la hora 5),
     # así que sale al cierre de la barra de la hora 4 (índice 3) con 3 barras y 4 horas en posición.
-    "hora_faltante": ([CALM, CALM, CALM, (100.0, 101.0, 99.0, 100.3), CALM], [0, 1, 2, 4, 5],
+    "hora_faltante": ([DECISION, CALM, CALM, (100.0, 101.0, 99.0, 100.3), CALM], [0, 1, 2, 4, 5],
                       1, env.LONG, 3, 100.3, "horizonte", 4, False),
-    "fin_de_datos": ([CALM, CALM, (100.0, 101.0, 99.0, 100.4)], None,
+    "fin_de_datos": ([DECISION, CALM, (100.0, 101.0, 99.0, 100.4)], None,
                      1, env.LONG, 2, 100.4, "fin_datos", 2, False),
 }
 
@@ -89,7 +100,7 @@ def test_take_profit_numbers_by_hand():
 @pytest.mark.parametrize("intrabar, reason, price", [("stop_first", "stop", 98.0), ("tp_first", "take_profit", 102.0)])
 def test_intrabar_ambiguity(intrabar, reason, price):
     """Si una barra toca stop y take-profit, el supuesto intrabarra decide y la operación queda marcada como ambigua."""
-    bars = [CALM, CALM, (100.0, 102.5, 97.5, 100.0), CALM, CALM, CALM]
+    bars = [DECISION, CALM, (100.0, 102.5, 97.5, 100.0), CALM, CALM, CALM]
     trading_env = make_env(bars, intrabar=intrabar)
     _, _, _, _, info = trading_env.step(env.LONG)
     assert (info["exit_reason"], info["exit_price"], info["intrabar_ambiguous"]) == (reason, price, True)
@@ -111,6 +122,57 @@ def test_buy_and_hold_equals_asset_return_minus_costs():
     entry, exit_ = piece["open"].iloc[1], piece["close"].iloc[-1]
     assert info["exit_reason"] == "fin_datos" and truncated
     assert trading_env.equity == pytest.approx(exit_ / entry - COST * (1 + exit_ / entry), rel=1e-12)
+
+
+def test_entry_is_next_open_not_decision_close():
+    """La entrada es la apertura de t + 1 (100), no el cierre de t (99.6) con el que se decidió."""
+    trading_env = make_env(CASES["take_profit_largo"][0])
+    _, _, _, _, info = trading_env.step(env.LONG)
+    assert info["entry_price"] == 100.0 != trading_env.close[0]
+
+
+def test_exit_at_open_flag():
+    """La bitácora marca las salidas a la apertura (gap y horizonte vencido en un hueco) y no las demás."""
+    flags = {}
+    for name in ["gap_en_apertura", "horizonte_en_hueco", "take_profit_tras_hueco", "horizonte", "stop_largo"]:
+        bars, hours, *_ = CASES[name]
+        trading_env = make_env(bars, hours)
+        flags[name] = trading_env.step(env.LONG)[4]["exit_at_open"]
+    assert flags == {"gap_en_apertura": True, "horizonte_en_hueco": True, "take_profit_tras_hueco": True,
+                     "horizonte": False, "stop_largo": False}
+
+
+def test_obs_lag_also_delays_barrier_volatility():
+    """Con obs_lag = 1 las barreras usan la volatilidad de t − 1, igual que la observación."""
+    bars = [DECISION, CALM, CALM, CALM, CALM, CALM]
+    index = pd.Timestamp("2024-01-01", tz="UTC") + pd.to_timedelta(range(len(bars)), unit="h")
+    ohlcv = pd.DataFrame(bars, columns=["open", "high", "low", "close"], index=index)
+    features = pd.DataFrame(np.zeros((len(bars), 1)), index=index)
+    vol = np.array([0.01, 0.02, 0.03, 0.03, 0.03, 0.03])
+    trading_env = env.TradingEnv(ohlcv, features, vol, lambda o: 0.0, mode="eval", horizon_hours=4, obs_lag=1)
+    trading_env.reset(seed=0)  # empieza en t = 1, observa la barra 0
+    _, _, _, _, info = trading_env.step(env.LONG)
+    assert info["entry_vol"] == 0.01
+    assert info["stop_level"] == pytest.approx(CALM[0] * (1 - 0.01 * 2))
+
+
+def test_trade_log_survives_vecenv_auto_reset():
+    """Con DummyVecEnv, el reset automático al terminar no borra la bitácora del episodio de evaluación."""
+    from stable_baselines3.common.vec_env import DummyVecEnv
+
+    bars = [DECISION] + [CALM] * 30
+    index = pd.Timestamp("2024-01-01", tz="UTC") + pd.to_timedelta(range(len(bars)), unit="h")
+    ohlcv = pd.DataFrame(bars, columns=["open", "high", "low", "close"], index=index)
+    features = pd.DataFrame(np.zeros((len(bars), 1)), index=index)
+    vec = DummyVecEnv([lambda: env.TradingEnv(ohlcv, features, np.full(len(bars), 0.01), lambda o: 0.0,
+                                              mode="eval", horizon_hours=4)])
+    vec.reset()
+    done = False
+    while not done:
+        _, _, dones, _ = vec.step(np.array([env.LONG]))
+        done = bool(dones[0])
+    log = vec.envs[0].trade_log()
+    assert len(log) == 8 and log["exit_reason"].iloc[-1] == "fin_datos"  # salidas en las barras 4, 8, ..., 28 y 30
 
 
 def test_semi_markov_duration_and_wait():
