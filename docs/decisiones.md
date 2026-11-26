@@ -33,4 +33,38 @@ reciben crédito. Sirve para el reporte y para responder "¿por qué hicieron X?
 | 2026-11-24 | Datos | `forward_log_return` (objetivo de la parte 02) es **NaN** cuando la barra siguiente empieza después de t + H | Usar el último cierre conocido en t + H | GC encontró que, con un hueco más largo que el horizonte, la salida quedaba antes de la entrada (376 filas con H = 1, 25 con H = 4, 12 con H = 24); esos rendimientos no corresponden a ninguna operación posible | GC / JME |
 | 2026-11-25 | Transición | Si el horizonte vence **dentro de un hueco** de datos, la posición sale a la **apertura de la primera barra posterior** (revisando ahí stop y take-profit) y la bitácora lo marca (`exit_at_open`); las salidas a la apertura (gaps incluidos) no cuentan la última hora como tenida. `forward_log_return` usa la misma convención | Salir al cierre de la última barra antes del hueco | Revisión de GC: al cierre previo al hueco todavía no se sabe que faltarán barras, así que salir ahí es look-ahead. Con siempre largo y siempre corto pasa en 16 de 1,010 operaciones en la prueba de 2025 y en 8 de 312 en la de 2026 (30 y 20 salidas a la apertura en total, contando gaps) | GC / JME |
 | 2026-11-25 | Evaluación | El entorno guarda la bitácora y la curva del último episodio de evaluación terminado (`trade_log()`, `equity_series()`), y con `obs_lag` la volatilidad de las barreras se retrasa igual que la observación | Evaluar sin VecEnv; retrasar solo las features | Revisión de GC: con `DummyVecEnv` el reset automático borraba la bitácora (542 operaciones quedaban en 0 filas); en el experimento de retraso de la parte 07 las barreras usaban información de t que la observación no tenía | GC / JME |
+| 2026-11-25 | Análisis (parte 02) | El estado se justifica **solo con el train del fold 1**; los trains de los folds 2–4 se usan únicamente para revisar la estabilidad | Elegir features con el train del fold 4 (más datos) | El train del fold 4 (2017–2024) contiene la validación (2022) y la prueba (2023) del fold 1: elegir con él filtraría información a esas particiones | GC |
+| 2026-11-25 | Regímenes (pregunta 1) | Giros (máximos y mínimos) de **45 %** en el cierre diario: 8 tramos en el train del fold 1 y 10 en el del fold 4, con rendimiento, tendencia, volatilidad y drawdown en `regimes.csv`. El primer y el último tramo se marcan como incompletos | Fechas elegidas a mano; umbral de 35 % | A mano no es reproducible. Con 35 % el tramo bajista de 2018 se parte en más pedazos (rebote de feb–mar) y la caída de 2019–2020 también. Los giros se conocen a posteriori, así que nunca entran al estado | GC |
+| 2026-11-25 | Análisis (parte 02) | IM y correlaciones con el rendimiento a **24 h** sobre una muestra **sin traslape, cada 25 barras** (n = 1,500 en el fold 1), con el azar medido por 200 permutaciones y el máximo de las 22 features | Usar todas las horas; una muestra cada 24 h | Con todas las horas los objetivos se traslapan y la IM máxima del fold 1 sube de 0.099 a 0.183. Cada 24 barras se tomaría casi siempre la misma hora y las variables de calendario no variarían | GC |
+| 2026-11-25 | Estado (información, pregunta 2) | Se **conservan las 22 features**; la evidencia por feature está al final de este archivo | (a) Ventana de precios crudos (plantilla de clase); (b) quedarse solo con las 3 features que superan el azar; (c) 24 rezagos del rendimiento | (a) El log-precio no es estacionario (ADF p = 0.83, KPSS p ≤ 0.01) y ADF rechaza la raíz unitaria en las 22 features. (b) `belief_drift_se`, `rv_168h` y `parkinson_24h` superan el azar en los 4 folds, pero son de volatilidad: informan el tamaño del movimiento (Spearman con el valor absoluto de 0.29 a 0.33) y no su dirección; dejarían al agente sin nada sobre tendencia. La IM es univariada: no descarta interacciones. (c) La autocorrelación de los rendimientos es chica (−0.053 en el rezago 1, −0.046 en el 24). **Límite:** solo `ret_24h` tiene p < 0.05 con la dirección (Spearman −0.076, p = 0.003; no pasa Bonferroni de 22 pruebas, 0.0023), así que se espera poca ventaja direccional | GC |
+| 2026-11-25 | Ablación (para la parte 07) | Se declara la **redundancia entre familias** antes de ablacionar | Suponer que quitar una familia quita su información | Spearman entre features en el train del fold 1: `rv_24h`–`parkinson_24h` 0.97, `ema_gap_720h`–`belief_drift` 0.98, `rv_168h`–`belief_drift_se` 0.92, `rv_24h`–`belief_vol` 0.92. Quitar `volatility` deja `belief_vol` y `belief_drift_se`: una ablación sin efecto no prueba que la información sobre | GC |
 | 2026-11-23 | Organización | Sin dashboard | Dashboard en Streamlit como en el Lab03 | El enunciado del Lab04 no lo pide (§2.1: cuatro entregables) | Equipo |
+
+## Evidencia por feature (parte 02, train del fold 1)
+
+Cifras de `artifacts/feature_analysis_fold_{k}.csv`. Azar = percentil 95 del máximo de las 22 IM permutadas (0.055 nats en el fold 1). Dirección y tamaño = Spearman con el rendimiento a 24 h y con su valor absoluto; * = p < 0.05 sin corregir.
+
+| Feature | Familia | IM fold 1 | Folds en que supera el azar | Dirección | Tamaño | ADF / KPSS | Lectura |
+|---|---|---|---|---|---|---|---|
+| `ret_1h` | returns | 0.000 | 0 de 4 | -0.002 | -0.037 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `ret_4h` | returns | 0.003 | 0 de 4 | -0.037 | -0.015 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `ret_24h` | returns | 0.008 | 0 de 4 | -0.076* | -0.008 | estacionaria | informa la dirección (débil) |
+| `ret_168h` | returns | 0.032 | 0 de 4 | +0.029 | -0.010 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `rv_24h` | volatility | 0.035 | 2 de 4 | +0.023 | +0.270* | mixta | informa el tamaño |
+| `rv_168h` | volatility | 0.075 | 4 de 4 | +0.028 | +0.325* | mixta | informa el tamaño |
+| `parkinson_24h` | volatility | 0.066 | 4 de 4 | +0.032 | +0.287* | mixta | informa el tamaño |
+| `vol_ratio_24_168` | volatility | 0.013 | 0 de 4 | +0.013 | -0.007 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `ema_gap_24h` | trend | 0.021 | 0 de 4 | -0.047 | -0.005 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `ema_gap_168h` | trend | 0.005 | 0 de 4 | +0.013 | -0.020 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `ema_gap_720h` | trend | 0.039 | 0 de 4 | +0.047 | +0.017 | mixta | sin evidencia individual; se conserva para la ablación |
+| `drawdown_720h` | trend | 0.046 | 1 de 4 | +0.027 | -0.120* | mixta | informa el tamaño |
+| `volume_z_168h` | volume | 0.000 | 0 de 4 | -0.008 | +0.058* | estacionaria | informa el tamaño |
+| `volume_ratio_24_168` | volume | 0.000 | 0 de 4 | +0.036 | -0.018 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `hour_sin` | calendar | 0.000 | 0 de 4 | +0.031 | +0.003 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `hour_cos` | calendar | 0.004 | 0 de 4 | +0.006 | -0.008 | estacionaria | sin evidencia individual; se conserva para la ablación |
+| `dow_sin` | calendar | 0.002 | 2 de 4 | -0.027 | +0.068* | estacionaria | informa el tamaño |
+| `dow_cos` | calendar | 0.009 | 0 de 4 | -0.026 | +0.081* | estacionaria | informa el tamaño |
+| `belief_drift` | belief | 0.005 | 0 de 4 | +0.045 | +0.010 | mixta | sin evidencia individual; se conserva para la ablación |
+| `belief_drift_se` | belief | 0.099 | 4 de 4 | +0.031 | +0.331* | mixta | informa el tamaño |
+| `belief_drift_t` | belief | 0.006 | 0 de 4 | +0.049 | +0.013 | mixta | sin evidencia individual; se conserva para la ablación |
+| `belief_vol` | belief | 0.049 | 2 de 4 | +0.022 | +0.301* | mixta | informa el tamaño |
