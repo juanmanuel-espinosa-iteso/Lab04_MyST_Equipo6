@@ -107,33 +107,40 @@ def test_training_is_reproducible_with_the_seed(fold_1):
 
 # ---------------------------------------------------------------------- búsqueda y selección
 
-def results_table(val_by_config):
-    """Tabla de resultados a mano: {config_id: [puntaje de validación por semilla]}."""
-    return pd.DataFrame([{"config_id": c, "seed": s, "val_log_growth": v}
-                         for c, values in val_by_config.items() for s, v in enumerate(values)])
+def results_table(val_by_candidate):
+    """Tabla de resultados a mano: {(config_id, timesteps): [puntaje de validación por semilla]}."""
+    return pd.DataFrame([{"config_id": c, "timesteps": n, "seed": s, "val_log_growth": v}
+                         for (c, n), values in val_by_candidate.items() for s, v in enumerate(values)])
 
 
 def test_select_config_uses_the_median_across_seeds():
     """Gana la mediana entre semillas, no la mejor semilla: la configuración 1 tiene una semilla suertuda."""
-    results = results_table({0: [0.05, 0.06, 0.04], 1: [0.50, -0.30, -0.20]})
-    config_id, seed = train.select_config(results)
-    assert (config_id, seed) == (0, 0)  # mediana 0.05 > −0.20; la semilla mediana de la configuración 0 es la 0
+    results = results_table({(0, 100): [0.05, 0.06, 0.04], (1, 100): [0.50, -0.30, -0.20]})
+    assert train.select_config(results) == (0, 100, 0)  # mediana 0.05 > −0.20; semilla mediana de la 0: la 0
 
 
-def test_select_config_breaks_ties_with_the_lower_id():
-    """Empate en la mediana → la configuración de menor índice (regla fija, no la que se vea mejor después)."""
-    results = results_table({2: [0.0, 0.0, 0.0], 5: [0.0, 0.0, 0.0]})
-    assert train.select_config(results)[0] == 2
+def test_select_config_treats_the_checkpoint_as_a_hyperparameter():
+    """El punto de control (pasos de entrenamiento) se elige igual, por mediana en validación (parada temprana)."""
+    results = results_table({(0, 100): [0.01, 0.02, 0.03], (0, 200): [-0.4, -0.5, -0.6], (1, 200): [0.0, 0.0, 0.0]})
+    assert train.select_config(results) == (0, 100, 1)
+
+
+def test_select_config_breaks_ties_with_fewer_steps_then_lower_id():
+    """Empate en la mediana → menos pasos y luego menor índice (regla fija, no la que se vea mejor después)."""
+    results = results_table({(5, 100): [0.0] * 3, (2, 100): [0.0] * 3, (2, 50): [0.0] * 3})
+    assert train.select_config(results)[:2] == (2, 50)
 
 
 def test_search_touches_only_train_and_validation(fold_1, tmp_path):
-    """Una búsqueda chica: una fila por (configuración, semilla) con métricas de train y validación, nunca de prueba,
-    y el modelo guardado de cada corrida."""
+    """Una búsqueda chica: una fila por (configuración, semilla, punto de control) con métricas de train y validación,
+    nunca de prueba, y el modelo guardado en cada punto de control."""
     from main import BTC_CSV, FOLDS
 
-    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0, 1], total_timesteps=1_000)
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0, 1], total_timesteps=1_000,
+                             checkpoints=(500, 1_000))
     results, curves = train.hyperparameter_search(jobs, processes=1)
-    assert len(results) == 2 and set(curves) == {(0, 0), (0, 1)}
+    assert len(results) == 4 and set(curves) == {(0, 0), (0, 1)}
+    assert sorted(results["timesteps"].unique()) == [500, 1_000]
     assert not [c for c in results.columns if "test" in c]
     assert {"val_log_growth", "val_sharpe", "train_log_growth"} <= set(results.columns)
-    assert all((tmp_path / "fold_1" / f"cfg00_seed{s}.zip").exists() for s in (0, 1))
+    assert all(train.model_path(tmp_path, 1, 0, s, n).exists() for s in (0, 1) for n in (500, 1_000))

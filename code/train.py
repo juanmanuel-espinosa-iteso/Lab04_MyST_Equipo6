@@ -10,6 +10,8 @@ bootstrap; el fin de la ventana (`truncated`) no, porque el mercado sigue.
 
 Parámetros del módulo (abajo): rejilla `GRID`, `SEEDS`, `TOTAL_TIMESTEPS`, hiperparámetros fijos de DQN y criterio de
 selección `SELECTION_METRIC` (mediana entre semillas del crecimiento log en validación, fijado antes de ver resultados).
+Los pasos de entrenamiento también se eligen en validación: cada corrida se puntúa en los puntos de control
+`CHECKPOINTS` (parada temprana), porque con 300k pasos el agente memoriza el train.
 """
 
 import itertools
@@ -23,6 +25,7 @@ import torch
 from stable_baselines3 import DQN
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
 from code import data, env, reward
@@ -111,6 +114,7 @@ def run_baselines(fold_data, seed):
 # ---------------------------------------------------------------------- rejilla y entrenamiento de una corrida
 
 TOTAL_TIMESTEPS = 300_000  # decisiones por corrida (≈ 10 recorridos del train del fold 1)
+CHECKPOINTS = (50_000, 100_000, 150_000, 200_000, 250_000, 300_000)  # se puntúa en validación en cada uno
 SEEDS = (0, 1, 2)
 SELECTION_METRIC = "log_growth"  # criterio (A): mediana entre semillas en validación
 SEARCH_SPACE = {
@@ -134,16 +138,31 @@ def make_dqn(trading_env, config, seed):
                **DQN_FIXED)
 
 
-def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward_name=reward.DEFAULT_REWARD):
+class _Checkpoints(BaseCallback):
+    """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control."""
+
+    def __init__(self, checkpoints, on_checkpoint):
+        super().__init__()
+        self.pending, self.on_checkpoint = sorted(checkpoints), on_checkpoint
+
+    def _on_step(self):
+        while self.pending and self.num_timesteps >= self.pending[0]:
+            self.on_checkpoint(self.model, self.pending.pop(0))
+        return True
+
+
+def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward_name=reward.DEFAULT_REWARD,
+                checkpoints=(), on_checkpoint=None):
     """Entrena un DQN en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
 
     La curva tiene, por episodio, los pasos acumulados al terminarlo y su recompensa total (= ln del capital del
-    episodio, con la contribución principal).
+    episodio, con la contribución principal). `on_checkpoint(model, pasos)` se llama en cada punto de `checkpoints`.
     """
     torch.set_num_threads(1)
     monitored = Monitor(env.make_env(fold_data, "train", reward.REWARDS[reward_name]))
     model = make_dqn(monitored, config, seed)
-    model.learn(total_timesteps=total_timesteps)
+    callback = _Checkpoints(checkpoints, on_checkpoint) if on_checkpoint else None
+    model.learn(total_timesteps=total_timesteps, callback=callback)
     curve = pd.DataFrame({"timesteps": np.cumsum(monitored.get_episode_lengths()),
                           "episode_reward": monitored.get_episode_rewards()})
     return model, curve
@@ -169,34 +188,44 @@ def _fold_data(csv_path, fold, dates):
     return _CACHE[fold]
 
 
-def model_path(models_dir, fold, config_id, seed):
-    """Ruta del modelo de una corrida: `models_dir/fold_{k}/cfg{id}_seed{s}.zip`."""
-    return Path(models_dir) / f"fold_{fold}" / f"cfg{config_id:02d}_seed{seed}.zip"
+def model_path(models_dir, fold, config_id, seed, timesteps):
+    """Ruta del modelo de una corrida en un punto de control: `models_dir/fold_{k}/cfg{id}_seed{s}_t{pasos}.zip`."""
+    return Path(models_dir) / f"fold_{fold}" / f"cfg{config_id:02d}_seed{seed}_t{timesteps}.zip"
 
 
-def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS, total_timesteps=TOTAL_TIMESTEPS):
+def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS, total_timesteps=TOTAL_TIMESTEPS,
+                checkpoints=CHECKPOINTS):
     """Corridas (configuración × semilla) de la búsqueda de un fold."""
     config_ids = range(len(GRID)) if config_ids is None else config_ids
     return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(models_dir), config_id=c, seed=s,
-                 total_timesteps=total_timesteps) for c in config_ids for s in seeds]
+                 total_timesteps=total_timesteps, checkpoints=tuple(checkpoints))
+            for c in config_ids for s in seeds]
 
 
 def run_job(job):
-    """Entrena una corrida, guarda el modelo y la puntúa en train y validación (nunca en prueba)."""
+    """Entrena una corrida y, en cada punto de control, guarda el modelo y lo puntúa en train y validación (nunca en
+    prueba). Devuelve (filas, curva de entrenamiento)."""
     start = time.perf_counter()
     fold_data = _fold_data(job["csv_path"], job["fold"], job["dates"])
     config = GRID[job["config_id"]]
-    model, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"])
-    path = model_path(job["models_dir"], job["fold"], job["config_id"], job["seed"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    model.save(path)
-    policy = as_policy(model)
-    row = {"fold": job["fold"], "config_id": job["config_id"], "seed": job["seed"],
-           **{k: str(v) if k == "net_arch" else v for k, v in config.items()}}
-    for split, prefix in (("train", "train"), ("validation", "val")):
-        row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
-    row["minutes"] = (time.perf_counter() - start) / 60
-    return row, curve
+    base = {"fold": job["fold"], "config_id": job["config_id"], "seed": job["seed"],
+            **{k: str(v) if k == "net_arch" else v for k, v in config.items()}}
+    rows = []
+
+    def checkpoint(model, timesteps):
+        path = model_path(job["models_dir"], job["fold"], job["config_id"], job["seed"], timesteps)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        model.save(path)
+        policy, row = as_policy(model), {**base, "timesteps": timesteps}
+        for split, prefix in (("train", "train"), ("validation", "val")):
+            row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
+        rows.append(row)
+
+    _, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"],
+                           checkpoints=job["checkpoints"], on_checkpoint=checkpoint)
+    for row in rows:
+        row["minutes"] = (time.perf_counter() - start) / 60
+    return rows, curve
 
 
 def hyperparameter_search(jobs, processes=1):
@@ -206,16 +235,20 @@ def hyperparameter_search(jobs, processes=1):
             outputs = pool.map(run_job, jobs, chunksize=1)
     else:
         outputs = [run_job(job) for job in jobs]
-    results = pd.DataFrame([row for row, _ in outputs]).sort_values(["fold", "config_id", "seed"], ignore_index=True)
-    curves = {(row["config_id"], row["seed"]): curve for row, curve in outputs}
+    results = pd.DataFrame([row for rows, _ in outputs for row in rows])
+    results = results.sort_values(["fold", "config_id", "timesteps", "seed"], ignore_index=True)
+    curves = {(job["config_id"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
     return results, curves
 
 
 def select_config(results, metric=SELECTION_METRIC):
-    """Criterio (A), fijado antes de ver resultados: la configuración con mayor **mediana entre semillas** de
-    `val_{metric}` (empates → menor índice) y, de ella, la semilla mediana (no la mejor). Devuelve (config_id, seed)."""
+    """Criterio (A), fijado antes de ver resultados: el candidato (configuración, pasos) con mayor **mediana entre
+    semillas** de `val_{metric}` (empates → menos pasos y luego menor índice) y, de él, la semilla mediana (no la
+    mejor). Devuelve (config_id, timesteps, seed)."""
     column = f"val_{metric}"
-    medians = results.groupby("config_id")[column].median()
-    config_id = int(medians[medians == medians.max()].index.min())
-    runs = results[results["config_id"] == config_id].sort_values([column, "seed"])
-    return config_id, int(runs["seed"].iloc[(len(runs) - 1) // 2])
+    medians = results.groupby(["config_id", "timesteps"])[column].median()
+    best = medians[medians == medians.max()].reset_index().sort_values(["timesteps", "config_id"]).iloc[0]
+    config_id, timesteps = int(best["config_id"]), int(best["timesteps"])
+    runs = results[(results["config_id"] == config_id) & (results["timesteps"] == timesteps)]
+    runs = runs.sort_values([column, "seed"])
+    return config_id, timesteps, int(runs["seed"].iloc[(len(runs) - 1) // 2])
