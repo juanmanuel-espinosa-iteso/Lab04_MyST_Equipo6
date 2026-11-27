@@ -200,3 +200,19 @@ def test_saved_search_is_reused_only_with_the_same_settings(tmp_path):
     other = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0, 1], seeds=[0], total_timesteps=1_000)
     assert train.load_search(path, other) is None
     assert train.load_search(tmp_path / "no_existe.pkl", jobs) is None
+
+
+@pytest.mark.parametrize("module, name, value", [
+    ("env", "HORIZON_HOURS", 12), ("env", "K_STOP", 2.0), ("env", "COST_PER_SIDE", 0.002), ("env", "INTRABAR", "tp_first"),
+    ("env", "EPISODE_BARS", 360), ("data", "FEATURES", ["ret_1h"]),
+])
+def test_reuse_is_refused_if_the_environment_or_features_changed(tmp_path, monkeypatch, module, name, value):
+    """Si cambia un parámetro del entorno o las features, la búsqueda guardada no se reusa (se volvería a entrenar)."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0])
+    path = tmp_path / "search.pkl"
+    train.save_search(path, jobs, pd.DataFrame({"fold": [1]}), {})
+    assert train.load_search(path, jobs) is not None
+    monkeypatch.setattr({"env": env, "data": data}[module], name, value)
+    assert train.load_search(path, jobs) is None
