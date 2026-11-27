@@ -163,7 +163,8 @@ def run_training_stage(ohlcv, features):
         "chosen": chosen, "runs": len(jobs), "processes": PROCESSES, "reused_search": saved is not None,
         "training_minutes": round((time.perf_counter() - start) / 60, 1),
     }, ARTIFACTS / "run_metadata.json")
-    print(f"[entrenamiento] {len(jobs)} corridas en {(time.perf_counter() - start) / 60:.1f} min; elegidas: "
+    done = "reusadas" if saved is not None else f"en {(time.perf_counter() - start) / 60:.1f} min"
+    print(f"[entrenamiento] {len(jobs)} corridas {done}; elegidas: "
           + "; ".join(f"fold {k} cfg {c['config_id']} {c['timesteps'] // 1000}k pasos "
                       f"(val {c['val_log_growth_median']:+.3f})" for k, c in chosen.items()))
     return policies
