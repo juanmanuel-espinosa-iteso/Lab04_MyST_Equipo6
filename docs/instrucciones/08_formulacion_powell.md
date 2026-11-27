@@ -11,13 +11,13 @@ penalización considerable en el criterio de lógica del modelo). Cada elemento 
 
 ## Checklist
 
-- [ ] **Estado S_t** con la descomposición explícita:
-  - [ ] física R_t: posición, precio de entrada, tiempo en posición, efectivo;
-  - [ ] información I_t: lo observado del mercado (features de la parte 01);
-  - [ ] creencia B_t: lo estimado, con su incertidumbre.
-- [ ] **Decisión x_t:** espacio de acciones y tratamiento de acciones inválidas.
-- [ ] **Información exógena W_{t+1}:** la trayectoria OHLCV hasta el cierre de la posición.
-- [ ] **Función de transición S^M(S_t, x_t, W_{t+1}):** incluye la lógica de cierre (horizonte, stop, take-profit, cierre
+- [x] **Estado S_t** con la descomposición explícita:
+  - [x] física R_t: posición, precio de entrada, tiempo en posición, efectivo;
+  - [x] información I_t: lo observado del mercado (features de la parte 01);
+  - [x] creencia B_t: lo estimado, con su incertidumbre.
+- [x] **Decisión x_t:** espacio de acciones y tratamiento de acciones inválidas.
+- [x] **Información exógena W_{t+1}:** la trayectoria OHLCV hasta el cierre de la posición.
+- [x] **Función de transición S^M(S_t, x_t, W_{t+1}):** incluye la lógica de cierre (horizonte, stop, take-profit, cierre
       explícito), la resolución intrabarra y la duración τ (semi-Markov).
 - [ ] **Contribución C(S_t, x_t, W_{t+1})** con costos, por paso o terminal.
 - [ ] **Objetivo:** max sobre políticas de E[Σ γ^{t_n} C(...)] con el descuento por duración real.
@@ -25,8 +25,13 @@ penalización considerable en el criterio de lógica del modelo). Cada elemento 
 - [ ] Para cada decisión de diseño (contenido del estado, espacio de decisión, episodio, parámetros del periodo de tenencia,
       contribución): elección, al menos una alternativa considerada y por qué se rechazó **con referencia a datos u
       observaciones empíricas** (tabla desde `decisiones.md`).
-- [ ] Definición de episodio explícita y qué se pierde con ella (el mercado es continuo).
-- [ ] Ejemplo numérico de una transición completa (puede ser la operación de referencia de la prueba 3).
+- [x] Definición de episodio explícita y qué se pierde con ella (el mercado es continuo).
+- [x] Ejemplo numérico de una transición completa (puede ser la operación de referencia de la prueba 3).
+
+**Estado (2026-11-27, JME):** `docs/powell.md` con las secciones 1–5, 7 y 8 (narrativa, estado R/I/B, decisión,
+información exógena, transición semi-Markov con el gestor de posiciones, episodio, ejemplo numérico y tabla de
+decisiones), rama `feat/jme-powell`. Falta la sección 6 (GC): contribución, objetivo con γ^τ y clase de política; y
+marcar la fila de decisiones de diseño cuando la contribución esté redactada.
 
 ## Criterio de terminado
 
