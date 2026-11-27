@@ -103,3 +103,16 @@ def test_max_drawdown_window_and_correlation():
     assert window["max_drawdown"] == pytest.approx(0.9 / 1.2 - 1)
     corr = evaluate.return_correlation(equity, equity * 3)
     assert corr["correlation"] == pytest.approx(1.0) and corr["beta"] == pytest.approx(1.0)
+
+
+def test_write_json_has_no_nan(tmp_path):
+    """Revisión de GC (PR #5): `trade_analysis.json` debe ser JSON válido; NaN e infinitos se escriben como null."""
+    import json
+
+    from main import write_json
+
+    path = tmp_path / "x.json"
+    write_json({"a": float("nan"), "b": [1.0, float("inf")], "c": {"d": np.float64("nan"), "e": 2}}, path)
+    text = path.read_text(encoding="utf-8")
+    assert "NaN" not in text and "Infinity" not in text
+    assert json.loads(text) == {"a": None, "b": [1.0, None], "c": {"d": None, "e": 2}}

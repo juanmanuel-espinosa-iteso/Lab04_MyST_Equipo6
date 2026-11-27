@@ -37,9 +37,20 @@ FOLDS = {
 }
 
 
+def _json_safe(obj):
+    """Copia de `obj` apta para JSON estricto: NaN e infinitos pasan a `null` (JSON no tiene NaN)."""
+    if isinstance(obj, dict):
+        return {key: _json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(value) for value in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
+
+
 def write_json(obj, path):
-    """Escribe `obj` como JSON legible (UTF-8, sangría de 2)."""
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    """Escribe `obj` como JSON válido y legible (UTF-8, sangría de 2); NaN e infinitos se escriben como `null`."""
+    path.write_text(json.dumps(_json_safe(obj), indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
 
 
 def run_data_stage():
