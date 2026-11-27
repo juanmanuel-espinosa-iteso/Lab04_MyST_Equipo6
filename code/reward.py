@@ -34,9 +34,14 @@ def net_log_return(outcome):
 
 
 def vol_scaled_return(outcome, horizon_hours=env.HORIZON_HOURS):
-    """Alternativa B: log neto / (σ̂ · √H), la escala de las barreras; 0 al esperar."""
+    """Alternativa B: log neto / (σ̂ · √H), la escala de las barreras; 0 al esperar.
+
+    σ̂ = 0 se acota a `VOL_FLOOR` (queda finita pero enorme; en los datos σ̂ ≥ 0.0011); σ̂ no finita es un error.
+    """
     if outcome.side == 0:
         return 0.0
+    if not np.isfinite(outcome.entry_vol):
+        raise ValueError(f"volatilidad en la entrada no finita: {outcome.entry_vol}")
     return net_log_return(outcome) / (max(outcome.entry_vol, VOL_FLOOR) * np.sqrt(horizon_hours))
 
 
@@ -98,7 +103,8 @@ def reward_comparison(fold_data, split="train", seed=42):
             values = np.array([fn(o) for o in outcomes])
             rows[(policy, name)] = {
                 "decisions": len(outcomes), "trades": len(trades),
-                "mean_per_decision": values.mean(), "mean_per_trade": np.mean([fn(o) for o in trades]),
+                "mean_per_decision": values.mean(),
+                "mean_per_trade": np.mean([fn(o) for o in trades]) if trades else np.nan,
                 "total": values.sum(),
             }
     return pd.DataFrame.from_dict(rows, orient="index").rename_axis(["policy", "reward"])
