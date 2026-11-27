@@ -3,6 +3,8 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import stats
+from sklearn.feature_selection import mutual_info_regression
 
 from code import data, evaluate
 from main import BTC_CSV, FOLDS, SEED
@@ -23,7 +25,9 @@ def market():
 # ------------------------------------------------------------------ regímenes
 
 def test_turning_points_by_hand():
-    """100 → 200 → 100 → 200 con umbral de 45 %: un máximo en el día 1 y un mínimo en el día 2."""
+    """100 → 200 → 100 → 200 (días 1 a 4) con umbral de 45 %: mínimo en el día 1, máximo en el 2 y mínimo en el 3.
+
+    El último día (200) no es giro: no hay una caída posterior de 45 % que lo confirme."""
     pivots = evaluate.turning_points(daily([100, 200, 100, 200]), 0.45)
     assert [(str(t.date()), kind) for t, kind in pivots] == [("2020-01-01", "minimo"), ("2020-01-02", "maximo"),
                                                              ("2020-01-03", "minimo")]
@@ -80,6 +84,23 @@ def test_sampling_avoids_overlap_and_covers_every_hour(market):
     assert set(target.index.hour) == set(range(24))
 
 
+@pytest.mark.parametrize("offset", [0, 7, 24])
+def test_sampling_grid_is_fixed_in_clock_hours(market, offset):
+    """La malla son horas de reloj (cada 25 h desde el inicio del train, con desfase `offset`): un hueco de datos solo
+    quita las muestras que caen en él o cuyo objetivo lo toca; no desplaza la malla de ahí en adelante."""
+    ohlcv, features = market
+    train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, FOLDS[1])
+    _, target = evaluate.feature_target_sample(train_ohlcv, train_features, offset=offset)
+    hours = (target.index - train_ohlcv.index[0]) // pd.Timedelta(hours=1)
+    assert (hours % evaluate.SAMPLE_STEP == offset).all()
+
+    gap = train_features.index[300:340]  # se quitan 40 horas cerca del inicio
+    _, with_gap = evaluate.feature_target_sample(train_ohlcv.drop(gap), train_features.drop(gap), offset=offset)
+    after = target.index > gap[-1] + pd.Timedelta(hours=evaluate.TARGET_HORIZON + 1)
+    pd.testing.assert_index_equal(with_gap.index[with_gap.index.isin(target.index[after])], target.index[after])
+    assert with_gap.index.difference(target.index).empty
+
+
 def test_target_never_uses_prices_after_train(market):
     """El objetivo de la última muestra termina dentro del train."""
     ohlcv, features = market
@@ -111,3 +132,21 @@ def test_mutual_information_finds_a_planted_signal():
     assert table.loc["ruido", "mi"] < 0.1 * table.loc["senal", "mi"]
     again = evaluate.mutual_information(x, pd.Series(signal), SEED, n_permutations=5)
     pd.testing.assert_frame_equal(again, evaluate.mutual_information(x, pd.Series(signal), SEED, n_permutations=5))
+
+
+def test_offset_robustness_counts_by_hand(market):
+    """En cuántos de los 25 desfases sale significativa cada feature: igual a contar a mano con Spearman y con la IM
+    contra el umbral de azar común del fold."""
+    ohlcv, features = market
+    train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, FOLDS[1])
+    table = evaluate.offset_robustness(train_ohlcv, train_features, SEED, n_permutations=25)
+    assert (table["n_offsets"] == evaluate.SAMPLE_STEP).all()
+    assert table.index.tolist() == list(train_features.columns)
+    by_hand = {"spearman_sig": 0, "spearman_abs_sig": 0, "mi_above_null": 0}
+    for offset in range(evaluate.SAMPLE_STEP):
+        x, y = evaluate.feature_target_sample(train_ohlcv, train_features, offset=offset)
+        by_hand["spearman_sig"] += stats.spearmanr(x["ret_24h"], y).pvalue < 0.05
+        by_hand["spearman_abs_sig"] += stats.spearmanr(x["ret_24h"], y.abs()).pvalue < 0.05
+        mi = mutual_info_regression(x, y.to_numpy(), random_state=SEED)[list(x.columns).index("ret_24h")]
+        by_hand["mi_above_null"] += mi > table.loc["ret_24h", "mi_null_max_95"]
+    assert table.loc["ret_24h", list(by_hand)].to_dict() == by_hand

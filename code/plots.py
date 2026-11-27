@@ -182,7 +182,32 @@ def features_page(analyses):
     return fig
 
 
-def _summary_lines(regimes, hourly_info, ljung_box, stationarity, analyses):
+def robustness_page(robustness):
+    """Página 7: en cuántos de los 25 desfases de la malla sale significativa cada feature (fold 1 y mínimo entre folds)."""
+    first = robustness[1]
+    n = int(first["n_offsets"].iloc[0])
+    order = first.sort_values(["mi_above_null", "spearman_abs_sig"]).index
+    y = np.arange(len(order))
+    fig, (ax_mi, ax_dir, ax_size) = _page(
+        "Robustez a la fase de la malla de muestreo",
+        f"En cuántos de los {n} desfases (malla cada {evaluate.SAMPLE_STEP} h de reloj) sale significativa cada feature. "
+        "Barra: fold 1; punto: el fold con menos desfases.", ncols=3, sharey=True)
+    panels = ((ax_mi, "mi_above_null", "IM sobre el azar (máx. de 22)", BLUE),
+              (ax_dir, "spearman_sig", "Dirección: Spearman p < 0.05", ORANGE),
+              (ax_size, "spearman_abs_sig", "Tamaño: Spearman con |y|, p < 0.05", AQUA))
+    for ax, column, title, color in panels:
+        worst = np.min([robustness[k].loc[order, column] for k in robustness], axis=0)
+        ax.barh(y, first.loc[order, column], color=color, height=0.65)
+        ax.plot(worst, y, "o", color=INK, ms=4)
+        if column != "mi_above_null":  # el umbral de la IM ya corrige por las 22 features; el 5 % no aplica
+            ax.axvline(0.05 * n, color=MUTED, ls=":", lw=1)  # lo que se espera por azar con p < 0.05
+        ax.set(title=title, xlim=(0, n), xlabel="Desfases", yticks=y, yticklabels=order)
+    ax_dir.text(0.05 * n, len(order) - 0.3, " 5 % (azar)", color=MUTED, fontsize=7.5, va="bottom")
+    fig.subplots_adjust(left=0.16, right=0.97, top=0.86, bottom=0.08, wspace=0.1)
+    return fig
+
+
+def _summary_lines(regimes, hourly_info, ljung_box, stationarity, analyses, robustness):
     """Texto de la página 1; cada cifra sale de las tablas calculadas."""
     first, last = analyses[1], regimes[max(regimes)]
     r1 = regimes[1]
@@ -209,11 +234,25 @@ def _summary_lines(regimes, hourly_info, ljung_box, stationarity, analyses):
          f"Con p < 0.05 (sin corregir por 22 pruebas), {directional} se relaciona(n) con la dirección y {sized} con el tamaño del movimiento.\n"
          f"Spearman absoluto máximo: {first['spearman'].abs().max():.3f} con la dirección y {first['spearman_abs_target'].abs().max():.3f} con el tamaño.\n"
          f"Con todas las horas (objetivos traslapados) la IM máxima sube de {first['mi'].max():.3f} a {first['mi_all_hours'].max():.3f}: está inflada."),
+        ("Robustez a la fase de la malla", _robustness_text(robustness)),
     ]
 
 
-def write_eda_pdf(path, figures_dir, ohlcv, features, folds, regimes, analyses):
-    """Escribe `btcusdt_eda.pdf` (6 páginas) y cada figura como PNG en `figures_dir`.
+def _robustness_text(robustness):
+    """Párrafo del resumen sobre los 25 desfases; cada cifra sale de `offset_robustness`."""
+    first = robustness[1]
+    n = int(first["n_offsets"].iloc[0])
+    half = n / 2
+    stable = [f for f in first.index if all(r.loc[f, "mi_above_null"] > half for r in robustness.values())]
+    best_dir = first["spearman_sig"].idxmax()
+    sized = int((first["spearman_abs_sig"] > half).sum())
+    return (f"Superan el azar en más de la mitad de los {n} desfases en los 4 folds: {', '.join(stable) or 'ninguna'}.\n"
+            f"Fold 1: {sized} features se relacionan con el tamaño en más de la mitad de los desfases; con la dirección, la más "
+            f"frecuente es {best_dir} ({first.loc[best_dir, 'spearman_sig']} de {n};\npor azar se esperarían ≈ {0.05 * n:.1f}).")
+
+
+def write_eda_pdf(path, figures_dir, ohlcv, features, folds, regimes, analyses, robustness):
+    """Escribe `btcusdt_eda.pdf` (7 páginas) y cada figura como PNG en `figures_dir`.
 
     Distribución, autocorrelación y estacionariedad usan el train del fold 1; los regímenes, el del último fold.
     """
@@ -227,12 +266,13 @@ def write_eda_pdf(path, figures_dir, ohlcv, features, folds, regimes, analyses):
     ljung_box = evaluate.ljung_box_table(hourly)
     with plt.rc_context(STYLE), PdfPages(path, metadata={"Title": "BTCUSDT: EDA del entrenamiento", "CreationDate": None}) as pdf:
         pages = {
-            "eda_resumen": summary_page(_summary_lines(regimes, evaluate.distribution_stats(hourly), ljung_box, stationarity, analyses)),
+            "eda_resumen": summary_page(_summary_lines(regimes, evaluate.distribution_stats(hourly), ljung_box, stationarity, analyses, robustness)),
             "eda_regimenes": regimes_page(last_close, regimes[last]),
             "eda_distribucion": distribution_page(hourly, daily),
             "eda_autocorrelacion": autocorrelation_page(hourly),
             "eda_estacionariedad": stationarity_page(stationarity, ljung_box),
             "eda_features": features_page(analyses),
+            "eda_robustez": robustness_page(robustness),
         }
         for name, fig in pages.items():
             pdf.savefig(fig)

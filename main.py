@@ -65,18 +65,21 @@ def run_data_stage():
 def run_eda_stage(ohlcv, features):
     """Parte 02: regímenes, análisis exploratorio y relación de cada feature con el objetivo, solo en entrenamiento.
 
-    Escribe `artifacts/regimes.csv`, `artifacts/feature_analysis_fold_{k}.csv` y `artifacts/btcusdt_eda.pdf` (y sus figuras
+    Escribe `artifacts/regimes.csv`, `artifacts/feature_analysis_fold_{k}.csv`, `artifacts/feature_robustness_fold_{k}.csv`
+    (robustez a la fase de la malla de muestreo) y `artifacts/btcusdt_eda.pdf` (y sus figuras
     en `docs/figuras/`). El estado se justifica con el train del fold 1; los demás folds solo revisan la estabilidad,
     porque su train incluye la validación y la prueba del fold 1.
     """
-    regimes, analyses = {}, {}
+    regimes, analyses, robustness = {}, {}, {}
     for k, dates in FOLDS.items():
         train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, dates)
         regimes[k] = evaluate.regime_table(evaluate.daily_close(train_ohlcv), evaluate.REGIME_THRESHOLD)
         analyses[k] = evaluate.feature_analysis(train_ohlcv, train_features, SEED)
         analyses[k].to_csv(ARTIFACTS / f"feature_analysis_fold_{k}.csv", float_format="%.6g")
+        robustness[k] = evaluate.offset_robustness(train_ohlcv, train_features, SEED)
+        robustness[k].to_csv(ARTIFACTS / f"feature_robustness_fold_{k}.csv", float_format="%.6g")
     pd.concat(regimes, names=["fold"]).to_csv(ARTIFACTS / "regimes.csv", float_format="%.6g")
-    plots.write_eda_pdf(ARTIFACTS / "btcusdt_eda.pdf", FIGURES, ohlcv, features, FOLDS, regimes, analyses)
+    plots.write_eda_pdf(ARTIFACTS / "btcusdt_eda.pdf", FIGURES, ohlcv, features, FOLDS, regimes, analyses, robustness)
     print(f"[eda] regímenes por fold: {[len(t) for t in regimes.values()]}; "
           f"features con IM sobre el azar por fold: {[int((t.mi > t.mi_null_max_95).sum()) for t in analyses.values()]}")
 
