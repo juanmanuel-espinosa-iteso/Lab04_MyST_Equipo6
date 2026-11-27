@@ -83,6 +83,7 @@ valor, actualízala. Los marcados *por decidir* se fijan en su parte y se regist
 | Algoritmo principal / segundo | por decidir (parte 05; propuesta DQN con descuento semi-Markov γ^τ / PPO) | `code/train.py` |
 | Rejilla de hiperparámetros y criterio de selección | por decidir (parte 05) | `code/train.py` |
 | Anualización de métricas | capital diario de 365 días (`DAYS_PER_YEAR_CALENDAR`), tasa libre de riesgo 0; alfa = exceso anualizado sobre cada benchmark | `code/evaluate.py` |
+| Sensibilidad | latencia `LATENCY_SECONDS = 2` → costo σ̂·√(2/3600) por lado; `EXTRA_COST_BP = (5, 10, 25)`; `tp_first`; `obs_lag = 1` | `code/evaluate.py` |
 | Benchmarks | BTC comprar y mantener (apertura de la 1.ª barra → último cierre) y S&P 500 `^GSPC` (snapshot `data/sp500_daily.csv`), 0.125 % por lado | `code/evaluate.py`, `code/data.py` |
 
 ## Estructura (obligatoria por el enunciado + extras marcados con *)
