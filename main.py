@@ -34,6 +34,10 @@ SP500_CSV = DATA / "sp500_daily.csv"  # solo benchmark (§3.7)
 MODELS = ARTIFACTS / "models"  # no se versionan; se regeneran
 # Procesos para la búsqueda (uno por corrida, torch con 1 hilo); LAB04_PROCESSES lo cambia
 PROCESSES = int(os.environ.get("LAB04_PROCESSES", max(1, min(10, (os.cpu_count() or 2) - 1))))
+# LAB04_REUSE_MODELS=1 reusa la búsqueda ya entrenada en artifacts/models/ si se hizo con los mismos parámetros (para
+# iterar sin volver a entrenar ≈ 40 min); un clon limpio no tiene modelos y siempre entrena.
+REUSE_MODELS = os.environ.get("LAB04_REUSE_MODELS") == "1"
+SEARCH_CACHE = MODELS / "search.pkl"
 
 # Walk-forward de ventana expansiva (§3.6): fechas inclusivas, horas en UTC.
 FOLDS = {
@@ -122,7 +126,13 @@ def run_training_stage(ohlcv, features):
     baselines.to_csv(ARTIFACTS / "baselines.csv", float_format="%.6g")
 
     jobs = [job for k, dates in FOLDS.items() for job in train.search_jobs(k, dates, BTC_CSV, MODELS)]
-    results, curves = train.hyperparameter_search(jobs, processes=PROCESSES)
+    saved = train.load_search(SEARCH_CACHE, jobs) if REUSE_MODELS else None
+    if saved is None:
+        results, curves = train.hyperparameter_search(jobs, processes=PROCESSES)
+        train.save_search(SEARCH_CACHE, jobs, results, curves)
+    else:
+        results, curves = saved
+        print(f"[entrenamiento] LAB04_REUSE_MODELS=1: se reusan los {len(jobs)} modelos de {MODELS} (misma búsqueda)")
     policies, chosen = {}, {}
     for k in FOLDS:
         fold_results = results[results["fold"] == k]
@@ -150,7 +160,7 @@ def run_training_stage(ohlcv, features):
         "search_space": {k: [list(v) if isinstance(v, tuple) else v for v in vals]
                          for k, vals in train.SEARCH_SPACE.items()},
         "dqn_fixed": train.DQN_FIXED, "selection": "mediana entre semillas de val_log_growth; semilla mediana",
-        "chosen": chosen, "runs": len(jobs), "processes": PROCESSES,
+        "chosen": chosen, "runs": len(jobs), "processes": PROCESSES, "reused_search": saved is not None,
         "training_minutes": round((time.perf_counter() - start) / 60, 1),
     }, ARTIFACTS / "run_metadata.json")
     print(f"[entrenamiento] {len(jobs)} corridas en {(time.perf_counter() - start) / 60:.1f} min; elegidas: "

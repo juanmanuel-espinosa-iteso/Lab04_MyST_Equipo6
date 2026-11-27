@@ -16,6 +16,7 @@ Los pasos de entrenamiento también se eligen en validación: cada corrida se pu
 
 import itertools
 import multiprocessing
+import pickle
 import time
 from pathlib import Path
 
@@ -169,8 +170,22 @@ def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward
 
 
 def as_policy(model):
-    """Política determinista `obs -> acción` de un modelo de SB3 (la que se evalúa en validación y prueba)."""
-    return lambda obs: int(model.predict(obs, deterministic=True)[0])
+    """Política determinista `obs -> acción` de un DQN: la acción de mayor Q̄ en la red (la que se evalúa en validación
+    y prueba).
+
+    Es el mismo argmax que `model.predict(obs, deterministic=True)` (prueba `test_fast_policy_matches_sb3_predict`), pero
+    llamando directo a la red Q, sin la preparación por observación de SB3: los recorridos completos son varias veces
+    más rápidos.
+    """
+    q_net = model.q_net
+    q_net.set_training_mode(False)
+
+    def policy(obs):
+        with torch.no_grad():
+            q_values = q_net(torch.as_tensor(obs, dtype=torch.float32).reshape(1, -1))
+        return int(q_values.argmax(dim=1)[0])
+
+    return policy
 
 
 # ---------------------------------------------------------------------- búsqueda en validación y selección
@@ -203,8 +218,8 @@ def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS,
 
 
 def run_job(job):
-    """Entrena una corrida y, en cada punto de control, guarda el modelo y lo puntúa en train y validación (nunca en
-    prueba). Devuelve (filas, curva de entrenamiento)."""
+    """Entrena una corrida y, en cada punto de control, guarda el modelo y lo puntúa en validación (y en train solo en el
+    último punto); nunca en prueba. Devuelve (filas, curva de entrenamiento)."""
     start = time.perf_counter()
     fold_data = _fold_data(job["csv_path"], job["fold"], job["dates"])
     config = GRID[job["config_id"]]
@@ -217,7 +232,9 @@ def run_job(job):
         path.parent.mkdir(parents=True, exist_ok=True)
         model.save(path)
         policy, row = as_policy(model), {**base, "timesteps": timesteps}
-        for split, prefix in (("train", "train"), ("validation", "val")):
+        # La validación decide (todos los puntos); el train es informativo (sobreajuste): solo en el último punto.
+        splits = (("validation", "val"),) + ((("train", "train"),) if timesteps == max(job["checkpoints"]) else ())
+        for split, prefix in splits:
             row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
         rows.append(row)
 
@@ -252,3 +269,30 @@ def select_config(results, metric=SELECTION_METRIC):
     runs = results[(results["config_id"] == config_id) & (results["timesteps"] == timesteps)]
     runs = runs.sort_values([column, "seed"])
     return config_id, timesteps, int(runs["seed"].iloc[(len(runs) - 1) // 2])
+
+
+# ---------------------------------------------------------------------- reusar una búsqueda ya entrenada
+
+def _signature(jobs):
+    """Lo que define una búsqueda: corridas, rejilla, hiperparámetros fijos y versión de la recompensa."""
+    keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints")
+    return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRID), "dqn_fixed": str(DQN_FIXED),
+            "reward": reward.DEFAULT_REWARD}
+
+
+def save_search(path, jobs, results, curves):
+    """Guarda resultados y curvas de una búsqueda junto a los modelos (no se versiona) para poder reusarla."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_bytes(pickle.dumps({"signature": _signature(jobs), "results": results, "curves": curves}))
+
+
+def load_search(path, jobs):
+    """(resultados, curvas) de una búsqueda guardada **solo si** se hizo con las mismas corridas y parámetros; si no
+    existe o cambió algo, None (hay que entrenar)."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    saved = pickle.loads(path.read_bytes())
+    if saved["signature"] != _signature(jobs):
+        return None
+    return saved["results"], saved["curves"]

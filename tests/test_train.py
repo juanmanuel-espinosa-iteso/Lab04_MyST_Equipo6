@@ -155,3 +155,48 @@ def test_training_curves_figure(tmp_path):
     path = tmp_path / "curvas.png"
     plots.plot_training_curves(curves, runs, train.GRID[0], 150, 1, path)
     assert path.stat().st_size > 10_000
+
+
+# ---------------------------------------------------------------------- velocidad sin cambiar resultados
+
+def test_fast_policy_matches_sb3_predict(fold_1):
+    """La política rápida (red Q directa) elige exactamente lo mismo que `model.predict(deterministic=True)` en cada
+    decisión de un recorrido completo de validación."""
+    model, _ = train.train_agent(fold_1, train.GRID[0], seed=3, total_timesteps=8_000)
+    trading_env = env.make_env(fold_1, "validation", reward.net_log_return, mode="eval")
+    obs, _ = trading_env.reset(seed=0)
+    fast, done, n = train.as_policy(model), False, 0
+    while not done:
+        expected = int(model.predict(obs, deterministic=True)[0])
+        assert fast(obs) == expected
+        obs, _, terminated, truncated, _ = trading_env.step(expected)
+        done, n = terminated or truncated, n + 1
+    assert n > 500
+
+
+def test_train_is_scored_only_at_the_last_checkpoint(fold_1, tmp_path):
+    """La validación se puntúa en todos los puntos de control; el train (informativo) solo en el último."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0], total_timesteps=1_000,
+                             checkpoints=(500, 1_000))
+    results, _ = train.hyperparameter_search(jobs, processes=1)
+    assert results["val_log_growth"].notna().all()
+    assert results.set_index("timesteps")["train_log_growth"].isna().to_dict() == {500: True, 1_000: False}
+
+
+def test_saved_search_is_reused_only_with_the_same_settings(tmp_path):
+    """Reusar una búsqueda guardada solo si sus corridas (folds, configuraciones, semillas, pasos y puntos de control)
+    son las mismas; si cambió algo, no se reusa y se vuelve a entrenar."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0, 1], seeds=[0])
+    results = pd.DataFrame({"fold": [1], "val_log_growth": [0.1]})
+    curves = {(1, 0, 0): pd.DataFrame({"timesteps": [10], "episode_reward": [0.0]})}
+    path = tmp_path / "search.pkl"
+    train.save_search(path, jobs, results, curves)
+    loaded = train.load_search(path, jobs)
+    assert loaded is not None and loaded[0].equals(results) and loaded[1][(1, 0, 0)].equals(curves[(1, 0, 0)])
+    other = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0, 1], seeds=[0], total_timesteps=1_000)
+    assert train.load_search(path, other) is None
+    assert train.load_search(tmp_path / "no_existe.pkl", jobs) is None
