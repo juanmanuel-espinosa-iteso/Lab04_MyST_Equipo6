@@ -327,3 +327,13 @@ def test_training_stops_at_the_last_checkpoint_with_the_same_schedule(fold_1):
                                      on_checkpoint=lambda m, n: None)
     assert short.num_timesteps == 6_000
     assert train.evaluate_policy(fold_1, "validation", train.as_policy(short), 5) == saved[6_000]
+
+
+def test_chosen_summary_by_hand():
+    """Resumen del candidato elegido de un algoritmo: configuración, pasos, semilla mediana y dispersión en validación."""
+    results = results_table({(0, 100): [0.05, 0.06, 0.04], (1, 100): [0.50, -0.30, -0.20]})
+    summary = train.chosen_summary(results)
+    assert (summary["config_id"], summary["timesteps"], summary["seed"]) == (0, 100, 0)
+    assert summary["val_median"] == pytest.approx(0.05)
+    assert (summary["val_min"], summary["val_max"]) == (pytest.approx(0.04), pytest.approx(0.06))
+    assert summary["candidates_above_zero"] == 1 and summary["candidates"] == 2

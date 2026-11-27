@@ -423,3 +423,15 @@ def ablation_table(results):
     mean = table.groupby(level="variant").mean().reindex(variants)
     mean.index = pd.MultiIndex.from_product([["media"], variants], names=["fold", "variant"])
     return pd.concat([table, mean])
+
+
+def chosen_summary(results, metric=SELECTION_METRIC):
+    """Lo que se reporta del candidato elegido de una búsqueda (para `algorithm_comparison.csv`): configuración, pasos,
+    semilla mediana, mediana, mínimo y máximo entre semillas en validación, y cuántos candidatos tienen mediana > 0."""
+    column = f"val_{metric}"
+    config_id, timesteps, seed = select_config(results, metric)
+    runs = results[(results["config_id"] == config_id) & (results["timesteps"] == timesteps)][column]
+    medians = results.groupby(["config_id", "timesteps"])[column].median()
+    return {"config_id": config_id, "timesteps": timesteps, "seed": seed, "val_median": float(runs.median()),
+            "val_min": float(runs.min()), "val_max": float(runs.max()),
+            "candidates": int(len(medians)), "candidates_above_zero": int((medians > 0).sum())}
