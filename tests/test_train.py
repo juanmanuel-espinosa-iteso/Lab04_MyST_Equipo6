@@ -144,3 +144,14 @@ def test_search_touches_only_train_and_validation(fold_1, tmp_path):
     assert not [c for c in results.columns if "test" in c]
     assert {"val_log_growth", "val_sharpe", "train_log_growth"} <= set(results.columns)
     assert all(train.model_path(tmp_path, 1, 0, s, n).exists() for s in (0, 1) for n in (500, 1_000))
+
+
+def test_training_curves_figure(tmp_path):
+    """La figura de curvas se escribe con curvas y puntos de control de dos semillas."""
+    from code import plots
+
+    curves = {s: pd.DataFrame({"timesteps": [100, 200, 300], "episode_reward": [0.1, -0.2, 0.3]}) for s in (0, 1)}
+    runs = pd.DataFrame({"seed": [0, 0, 1, 1], "timesteps": [150, 300] * 2, "val_log_growth": [0.1, -0.1, 0.0, 0.2]})
+    path = tmp_path / "curvas.png"
+    plots.plot_training_curves(curves, runs, train.GRID[0], 150, 1, path)
+    assert path.stat().st_size > 10_000
