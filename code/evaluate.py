@@ -405,10 +405,12 @@ AGENT = "agente"
 BENCHMARKS = ("btc_buy_hold", "sp500")
 
 
-def evaluate_test_fold(fold_data, policies, sp500, test_dates, seed, cost):
+def evaluate_test_fold(fold_data, policies, sp500, test_dates, seed, cost, env_params=None):
     """Evalúa en la prueba de un fold cada política de `policies` (nombre -> `obs -> acción`) y los dos benchmarks.
 
     La recompensa no interviene en la evaluación (solo la contabilidad), así que el entorno usa una contribución nula.
+    `env_params` son los parámetros del entorno congelados en la parte 05 (p. ej. `horizon_hours`, `k_stop`, `k_take`):
+    la prueba debe correr con los mismos que eligió la validación.
     Devuelve un dict con, por estrategia, el capital horario (`equity`), el diario (`daily`) y la bitácora (`trades`).
     """
     from code import env
@@ -416,7 +418,7 @@ def evaluate_test_fold(fold_data, policies, sp500, test_dates, seed, cost):
     start, end = test_dates
     out = {}
     for name, policy in policies.items():
-        trading_env = env.make_env(fold_data, "test", lambda outcome: 0.0, mode="eval", cost=cost)
+        trading_env = env.make_env(fold_data, "test", lambda outcome: 0.0, mode="eval", cost=cost, **(env_params or {}))
         equity, log = run_policy(trading_env, policy, seed)
         out[name] = {"equity": equity, "daily": daily_equity(equity, start, end), "trades": log}
     btc = fold_data.ohlcv["test"]
@@ -443,3 +445,87 @@ def trade_analysis(results_by_fold, raw_test_features, btc_daily_by_fold, n=3):
     worst_fold = min(drawdowns, key=lambda k: drawdowns[k]["max_drawdown"])
     correlation = {k: return_correlation(res[AGENT]["daily"], btc_daily_by_fold[k]) for k, res in results_by_fold.items()}
     return {"worst_trades": worst, "drawdowns": drawdowns, "worst_drawdown_fold": worst_fold, "correlation": correlation}
+
+
+# ====================================================================== Parte 07: sensibilidad y fallas de producción
+
+LATENCY_SECONDS = 2
+EXTRA_COST_BP = (5, 10, 25)  # costo extra por lado (slippage / impacto al operar tamaño), en puntos base
+
+
+def latency_cost(train_features, seconds=LATENCY_SECONDS):
+    """Costo por lado equivalente a llenar `seconds` segundos tarde: el movimiento típico del precio en ese lapso,
+    σ̂ · √(segundos / 3600), con σ̂ = mediana de la volatilidad horaria estimada (`belief_vol`) en el train del fold.
+
+    Supone rendimientos sin deriva a esa escala (el retraso empeora el llenado en promedio tanto como su desviación es
+    adversa a la orden); es una cota del orden de magnitud, no un modelo de microestructura.
+    """
+    return float(train_features["belief_vol"].median() * np.sqrt(seconds / 3600))
+
+
+def sensitivity_scenarios(base_cost, latency):
+    """Escenarios de §3.3, §3.10 y la pregunta 6, como parámetros del entorno que cambian **un solo** supuesto:
+
+    - `base`: stop primero, sin retraso, 0.125 % por lado;
+    - `tp_first`: si una barra toca stop y take-profit, gana el take-profit (el supuesto contrario de §3.3);
+    - `retraso_1_barra`: la observación (y la volatilidad de las barreras) llega con una barra de retraso;
+    - `latencia_2s`: el llenado pierde el movimiento típico de 2 s, como costo extra por lado;
+    - `costo_+Xpb`: slippage o impacto de X pb extra por lado al operar tamaño.
+    """
+    scenarios = {
+        "base": {},
+        "tp_first": {"intrabar": "tp_first"},
+        "retraso_1_barra": {"obs_lag": 1},
+        "latencia_2s": {"cost": base_cost + latency},
+    }
+    scenarios.update({f"costo_+{bp}pb": {"cost": base_cost + bp / 1e4} for bp in EXTRA_COST_BP})
+    return scenarios
+
+
+def same_trades_share(base_log, other_log):
+    """Proporción de las operaciones de `base_log` que `other_log` repite con la misma hora de decisión y el mismo lado.
+
+    Separa los dos efectos de cambiar un supuesto: con 1 las decisiones son las mismas y el cambio de resultado es
+    directo (p. ej. el costo extra de cada operación); por debajo de 1, el agente tomó otras decisiones, porque su estado
+    incluye variables de la cuenta (`equity_drawdown`, `last_trade_return`, `hours_flat`) que cambian con el capital.
+    Sin operaciones en la base, NaN.
+    """
+    if not len(base_log):
+        return np.nan
+    keys = ["decision_time", "side"]
+    shared = base_log[keys].merge(other_log[keys].drop_duplicates(), on=keys, how="inner")
+    return len(shared) / len(base_log)
+
+
+def run_sensitivity(fold_data, make_policy, test_dates, seed, base_cost, env_params=None):
+    """Corre la política en la prueba de un fold bajo cada escenario y compara contra el escenario base.
+
+    `make_policy()` devuelve una política `obs -> acción` **nueva** por escenario: una política con estado interno (el
+    agente aleatorio y su generador) arranca igual en todos, así que la diferencia no viene de otras decisiones al azar.
+    `env_params` son los parámetros congelados del entorno (los mismos de la evaluación); cada escenario cambia uno.
+
+    Por escenario: métricas de §3.7 (capital diario), costo por lado usado, % de operaciones con stop y take-profit en
+    la misma barra, proporción de operaciones de la base que se repiten (`same_trades_share`) y diferencia de
+    rendimiento total y Sharpe contra la base. La política es la misma en todos (congelada);
+    solo cambia el supuesto del simulador, así que la diferencia mide cuánto depende el resultado de ese supuesto.
+    """
+    from code import env
+
+    start, end = test_dates
+    latency = latency_cost(fold_data.raw_features["train"])
+    rows, logs = {}, {}
+    for name, params in sensitivity_scenarios(base_cost, latency).items():
+        params = {"cost": base_cost, **(env_params or {}), **params}
+        trading_env = env.make_env(fold_data, "test", lambda outcome: 0.0, mode="eval", **params)
+        equity, log = run_policy(trading_env, make_policy(), seed)
+        metrics = performance_metrics(daily_equity(equity, start, end), log)
+        metrics["cost_per_side"] = params["cost"]
+        metrics["ambiguous_share"] = log["intrabar_ambiguous"].mean() if len(log) else np.nan
+        metrics["n_ambiguous"] = int(log["intrabar_ambiguous"].sum()) if len(log) else 0
+        rows[name], logs[name] = metrics, log
+    for name in rows:
+        rows[name]["same_trades_share"] = same_trades_share(logs["base"], logs[name])
+    table = pd.DataFrame(rows).T.rename_axis("scenario")
+    table["delta_total_return"] = table["total_return"] - table.loc["base", "total_return"]
+    table["delta_sharpe"] = table["sharpe"] - table.loc["base", "sharpe"]
+    return table

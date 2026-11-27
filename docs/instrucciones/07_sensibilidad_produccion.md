@@ -26,13 +26,13 @@ REPETIR hasta cumplir el criterio de terminado:
 
 ## Checklist
 
-- [ ] **Intrabarra (§3.3):** proporción de operaciones con stop y take-profit en la misma barra y cambio del resultado
+- [x] **Intrabarra (§3.3):** proporción de operaciones con stop y take-profit en la misma barra y cambio del resultado
       con `tp_first` contra `stop_first` (mismo modelo, misma prueba).
-- [ ] **Retraso de una barra (pregunta 6 y latencia):** la observación llega con una barra de retraso; desempeño del
+- [x] **Retraso de una barra (pregunta 6 y latencia):** la observación llega con una barra de retraso; desempeño del
       mismo modelo.
-- [ ] **Latencia de 2 s:** argumento cuantitativo de si el precio de llenado supuesto (apertura de t + 1) sigue disponible
+- [x] **Latencia de 2 s:** argumento cuantitativo de si el precio de llenado supuesto (apertura de t + 1) sigue disponible
       (p. ej. con el rango típico de la barra horaria o el movimiento en minutos).
-- [ ] **Ejecución:** a qué precio llena el simulador y qué pasa al operar tamaño (profundidad del libro, slippage);
+- [x] **Ejecución:** a qué precio llena el simulador y qué pasa al operar tamaño (profundidad del libro, slippage);
       sensibilidad a un costo extra por lado.
 - [ ] **Capacidad y saturación:** si 50 fondos operan algo similar; quién está del otro lado y por qué.
 - [ ] **Cambio de régimen:** qué pasa si los próximos 12 meses se parecen a 2018, a 2022 o a un régimen ausente; qué
@@ -40,6 +40,12 @@ REPETIR hasta cumplir el criterio de terminado:
 - [ ] **Ablación (pregunta 7):** reentrenar quitando cada familia de variables con la configuración elegida y varias semillas
       → `ablation.csv`.
 - [ ] **Segundo algoritmo (pregunta 7):** p. ej. PPO con la misma búsqueda en validación → `algorithm_comparison.csv`.
+
+**Estado (2026-11-27, JME):** los 4 escenarios de JME corren con el agente congelado de la parte 05 y, como referencia,
+con siempre largo y aleatorio (`run_sensitivity`, `latency_cost`, `same_trades_share`, `run_sensitivity_stage` →
+`sensitivity.csv`, `tests/test_sensitivity.py`, notebook 07). Cifras en `docs/decisiones.md`. Falta escribir en el
+reporte las respuestas de capacidad/saturación y cambio de régimen (texto, con el análisis de la parte 02). Ablación y
+segundo algoritmo: GC.
 
 ## Criterio de terminado
 

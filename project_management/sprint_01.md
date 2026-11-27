@@ -20,7 +20,7 @@ del domingo 29 a las 23:59, revisado desde un clon limpio.
 | 04 Contribución + prueba de la recompensa | GC | hecho (2026-11-27, PR #4) |
 | 05 Entrenamiento: líneas base, semillas, búsqueda de HP | GC | en revisión (2026-11-27, rama `feat/gc-entrenamiento`) |
 | 06 Evaluación, benchmarks, bitácora + identidad contable | JME | maquinaria hecha (2026-11-25, rama `feat/jme-evaluacion`); falta correrla con el agente de la 05 |
-| 07 Sensibilidad (JME), ablación y segundo algoritmo (GC) | ambos | pendiente |
+| 07 Sensibilidad (JME), ablación y segundo algoritmo (GC) | ambos | JME: escenarios corridos con el agente (2026-11-27, rama `feat/jme-sensibilidad`), falta el texto de capacidad y régimen · GC: pendiente |
 | 08 Formulación de Powell | ambos | pendiente |
 | 10 Reporte, walkthrough y presentación | ambos | pendiente |
 | 99 Revisión desde clon limpio | ambos | pendiente |
