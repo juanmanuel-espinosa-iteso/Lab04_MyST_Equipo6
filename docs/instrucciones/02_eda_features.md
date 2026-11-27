@@ -26,19 +26,21 @@ REPETIR hasta cumplir el criterio de terminado:
 
 ## Checklist
 
-- [ ] **Regímenes (pregunta 1):** al menos 4 regímenes distintos en el entrenamiento por rango de fechas
+- [x] **Regímenes (pregunta 1):** al menos 4 regímenes distintos en el entrenamiento por rango de fechas
       (p. ej. burbuja 2017, invierno 2018, recuperación 2019–2020, covid, alza 2020–2021, caída 2022), con
       volatilidad anualizada, tendencia (rendimiento) y drawdown de cada uno → `regimes.csv`. Criterio reproducible
       (p. ej. drawdown y volatilidad móvil), no a ojo.
-- [ ] Distribución de rendimientos horarios y diarios: histograma contra la normal, asimetría, curtosis, Jarque–Bera.
-- [ ] Autocorrelación (ACF/PACF) de rendimientos y de rendimientos al cuadrado/absolutos (agrupamiento de volatilidad),
+- [x] Distribución de rendimientos horarios y diarios: histograma contra la normal, asimetría, curtosis, Jarque–Bera.
+- [x] Autocorrelación (ACF/PACF) de rendimientos y de rendimientos al cuadrado/absolutos (agrupamiento de volatilidad),
       con Ljung–Box.
-- [ ] Estacionariedad: ADF y KPSS de log-precio, rendimientos y cada feature, en el entrenamiento de cada fold.
-- [ ] `feature_analysis_fold_{k}.csv`: por feature, información mutua con el objetivo, correlación de Pearson y Spearman,
+- [x] Estacionariedad: ADF y KPSS de log-precio, rendimientos y cada feature, en el entrenamiento de cada fold.
+- [x] `feature_analysis_fold_{k}.csv`: por feature, información mutua con el objetivo, correlación de Pearson y Spearman,
       ADF p-value y autocorrelación de rezago 1; solo con el train del fold k.
-- [ ] `btcusdt_eda.pdf` con todas las figuras (título, ejes, leyenda) y una página de resumen.
-- [ ] **Pregunta 2:** párrafo y cifras que justifican el estado elegido y nombran la alternativa descartada
+- [x] `btcusdt_eda.pdf` con todas las figuras (título, ejes, leyenda) y una página de resumen.
+- [x] **Pregunta 2:** párrafo y cifras que justifican el estado elegido y nombran la alternativa descartada
       (p. ej. ventana de precios crudos como en la clase vs features estacionarias) → `decisiones.md` y reporte.
+
+**Estado (2026-11-25, GC):** implementado en la rama `feat/gc-eda`, pendiente de revisión de JME. Si el #2 cambia `forward_log_return`, se regenera con `python main.py` y se actualizan las cifras de `decisiones.md`. Falta pasar la pregunta 2 al reporte (parte 10).
 
 ## Criterio de terminado
 

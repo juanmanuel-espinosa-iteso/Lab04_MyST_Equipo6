@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
 # `code/` (obligatoria, §2.2) se llama igual que un módulo de la biblioteca estándar: se asegura el paquete local.
@@ -17,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 if not str(getattr(sys.modules.get("code"), "__file__", "")).startswith(str(ROOT)):
     sys.modules.pop("code", None)
 
-from code import data  # noqa: E402
+from code import data, evaluate, plots  # noqa: E402
 
 SEED = 42
 
@@ -60,8 +61,26 @@ def run_data_stage():
     return ohlcv, features
 
 
-def run_eda_stage():
-    """Parte 02: EDA, regímenes y análisis de features solo en entrenamiento (btcusdt_eda.pdf, feature_analysis)."""
+def run_eda_stage(ohlcv, features):
+    """Parte 02: regímenes, análisis exploratorio y relación de cada feature con el objetivo, solo en entrenamiento.
+
+    Escribe `artifacts/regimes.csv`, `artifacts/feature_analysis_fold_{k}.csv`, `artifacts/feature_robustness_fold_{k}.csv`
+    (robustez a la fase de la malla de muestreo) y `artifacts/btcusdt_eda.pdf` (y sus figuras
+    en `docs/figuras/`). El estado se justifica con el train del fold 1; los demás folds solo revisan la estabilidad,
+    porque su train incluye la validación y la prueba del fold 1.
+    """
+    regimes, analyses, robustness = {}, {}, {}
+    for k, dates in FOLDS.items():
+        train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, dates)
+        regimes[k] = evaluate.regime_table(evaluate.daily_close(train_ohlcv), evaluate.REGIME_THRESHOLD)
+        analyses[k] = evaluate.feature_analysis(train_ohlcv, train_features, SEED)
+        analyses[k].to_csv(ARTIFACTS / f"feature_analysis_fold_{k}.csv", float_format="%.6g")
+        robustness[k] = evaluate.offset_robustness(train_ohlcv, train_features, SEED)
+        robustness[k].to_csv(ARTIFACTS / f"feature_robustness_fold_{k}.csv", float_format="%.6g")
+    pd.concat(regimes, names=["fold"]).to_csv(ARTIFACTS / "regimes.csv", float_format="%.6g")
+    plots.write_eda_pdf(ARTIFACTS / "btcusdt_eda.pdf", FIGURES, ohlcv, features, FOLDS, regimes, analyses, robustness)
+    print(f"[eda] regímenes por fold: {[len(t) for t in regimes.values()]}; "
+          f"features con IM sobre el azar por fold: {[int((t.mi > t.mi_null_max_95).sum()) for t in analyses.values()]}")
 
 
 def run_training_stage():
@@ -80,8 +99,9 @@ def main():
     """Corre el pipeline completo de punta a punta con la semilla global."""
     np.random.seed(SEED)
     ARTIFACTS.mkdir(exist_ok=True)
-    run_data_stage()
-    run_eda_stage()
+    FIGURES.mkdir(parents=True, exist_ok=True)
+    ohlcv, features = run_data_stage()
+    run_eda_stage(ohlcv, features)
     run_training_stage()
     run_evaluation_stage()
     run_sensitivity_stage()
