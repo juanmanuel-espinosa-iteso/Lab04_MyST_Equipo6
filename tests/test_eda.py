@@ -23,7 +23,9 @@ def market():
 # ------------------------------------------------------------------ regímenes
 
 def test_turning_points_by_hand():
-    """100 → 200 → 100 → 200 con umbral de 45 %: un máximo en el día 1 y un mínimo en el día 2."""
+    """100 → 200 → 100 → 200 (días 1 a 4) con umbral de 45 %: mínimo en el día 1, máximo en el 2 y mínimo en el 3.
+
+    El último día (200) no es giro: no hay una caída posterior de 45 % que lo confirme."""
     pivots = evaluate.turning_points(daily([100, 200, 100, 200]), 0.45)
     assert [(str(t.date()), kind) for t, kind in pivots] == [("2020-01-01", "minimo"), ("2020-01-02", "maximo"),
                                                              ("2020-01-03", "minimo")]
