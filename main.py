@@ -219,19 +219,18 @@ def run_sensitivity_stage(ohlcv, features, agent_policies=None, agent_env_params
 
     Por fold y política: resolución intrabarra contraria (`tp_first`), una barra de retraso en los datos, latencia de 2 s
     como costo extra y +5/+10/+25 pb de slippage por lado, cada uno contra el escenario base (§3.3, §3.10, pregunta 6).
-    Con agente (`agent_policies`, fold -> `obs -> acción`) se corre el agente; sin él, las líneas base siempre largo y
-    aleatorio, para que el artefacto exista y la maquinaria quede probada. Escribe `artifacts/sensitivity.csv` con los
-    resultados por fold y la media y la desviación entre folds de cada Δ. La ablación y el segundo algoritmo (GC) van
-    en la parte 05.
+    Se corre el agente congelado de la parte 05 (`agent_policies`, fold -> `obs -> acción`) y, como referencia, las
+    líneas base siempre largo y aleatorio (operan mucho más, así que muestran el efecto de cada supuesto con más
+    operaciones). Escribe `artifacts/sensitivity.csv` con los resultados por fold y la media y la desviación entre folds
+    de cada Δ. La ablación y el segundo algoritmo (GC) van aparte.
     """
     rows = []
     for k, dates in FOLDS.items():
         fold = data.build_fold_dataset(ohlcv, features, k, dates)
+        makers = {name: (lambda name=name, k=k: evaluate.baseline_policies(3, SEED + k)[name])
+                  for name in ("siempre_largo", "aleatorio")}
         if agent_policies and k in agent_policies:
-            makers = {evaluate.AGENT: (lambda policy=agent_policies[k]: policy)}
-        else:
-            makers = {name: (lambda name=name, k=k: evaluate.baseline_policies(3, SEED + k)[name])
-                      for name in ("siempre_largo", "aleatorio")}
+            makers = {evaluate.AGENT: (lambda policy=agent_policies[k]: policy), **makers}
         for name, make_policy in makers.items():
             table = evaluate.run_sensitivity(fold, make_policy, dates["test"], SEED + k, env.COST_PER_SIDE,
                                              (agent_env_params or {}).get(k))
