@@ -37,16 +37,16 @@ REPETIR hasta cumplir el criterio de terminado:
 
 - [ ] Evaluación en prueba con el modelo elegido en validación, política determinista, **una sola corrida por fold** (se
       registra en `run_metadata.json`).
-- [ ] `trade_log_fold_{k}.csv`: entrada y salida (marca de tiempo y precio), razón de salida (horizonte, stop,
+- [x] `trade_log_fold_{k}.csv`: entrada y salida (marca de tiempo y precio), razón de salida (horizonte, stop,
       take-profit o cierre), tamaño, P&L bruto, costos, P&L neto, duración y estado en la entrada.
-- [ ] `test_accounting.py` (prueba obligatoria 4): capital final = capital inicial + Σ P&L neto de la bitácora.
-- [ ] Benchmarks con costo de 0.125 % por cada operación que generen: BTC buy-and-hold (compra al inicio, venta al final
+- [x] `test_accounting.py` (prueba obligatoria 4): capital final = capital inicial + Σ P&L neto de la bitácora.
+- [x] Benchmarks con costo de 0.125 % por cada operación que generen: BTC buy-and-hold (compra al inicio, venta al final
       del periodo) y S&P 500 indexado (`^GSPC`, snapshot versionado, solo benchmark).
-- [ ] Alineación de calendarios declarada (BTC 24/7 contra S&P 500 en días hábiles) y anualización coherente.
-- [ ] Métricas de §3.7 para estrategia y benchmarks, por fold y agregadas (media y desviación entre los 4 folds):
+- [x] Alineación de calendarios declarada (BTC 24/7 contra S&P 500 en días hábiles) y anualización coherente.
+- [x] Métricas de §3.7 para estrategia y benchmarks, por fold y agregadas (media y desviación entre los 4 folds):
       retorno total, retorno anualizado, volatilidad anualizada, Sharpe, Sortino, MDD, Calmar, hit rate, duración
       promedio de las operaciones, rotación y retorno en exceso contra cada benchmark (alfa) → `metrics_summary.csv`.
-- [ ] `equity_curves_test_fold_{k}.png`: estrategia contra ambos benchmarks.
+- [x] `equity_curves_test_fold_{k}.png`: estrategia contra ambos benchmarks.
 - [ ] **§3.9.1:** las 3 operaciones con mayor pérdida de prueba (todos los folds): entrada, salida, razón, variables de
       estado en la entrada y la interpretación (qué cambiaría en estado, recompensa o gestión de riesgo).
 - [ ] **§3.9.2:** periodo del mayor drawdown en prueba: gráfica de acciones y precio, y explicación.
@@ -60,6 +60,12 @@ REPETIR hasta cumplir el criterio de terminado:
       fijo (p. ej. el periodo del mayor drawdown de §3.9.2 o las 2 semanas con más operaciones). Se usa en la presentación.
 - [ ] **Preguntas 4 y 5:** variación entre folds y qué explica el fold más débil; si supera a ambos benchmarks después de
       costos y, si no, qué mide entonces el resultado.
+
+**Estado (2026-11-25, JME):** maquinaria completa en la rama `feat/jme-evaluacion` (sale de `feat/jme-entorno` + `feat/gc-eda`):
+`run_policy`, benchmarks, métricas, agregados, alfa, bitácora con estado, curvas, ventana del mayor drawdown y
+correlación, todo probado (`test_metrics.py`, `test_accounting.py`). Falta lo que depende del agente de la parte 05:
+la corrida única en prueba con el modelo elegido, §3.9 con cifras reales, las preguntas 4–5 y la simulación visual (GC).
+Para conectarlo: `run_training_stage` devuelve `{fold: obs -> acción}` y `main` se lo pasa a `run_evaluation_stage`.
 
 ## Criterio de terminado
 
