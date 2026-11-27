@@ -82,6 +82,23 @@ def test_sampling_avoids_overlap_and_covers_every_hour(market):
     assert set(target.index.hour) == set(range(24))
 
 
+@pytest.mark.parametrize("offset", [0, 7, 24])
+def test_sampling_grid_is_fixed_in_clock_hours(market, offset):
+    """La malla son horas de reloj (cada 25 h desde el inicio del train, con desfase `offset`): un hueco de datos solo
+    quita las muestras que caen en él o cuyo objetivo lo toca; no desplaza la malla de ahí en adelante."""
+    ohlcv, features = market
+    train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, FOLDS[1])
+    _, target = evaluate.feature_target_sample(train_ohlcv, train_features, offset=offset)
+    hours = (target.index - train_ohlcv.index[0]) // pd.Timedelta(hours=1)
+    assert (hours % evaluate.SAMPLE_STEP == offset).all()
+
+    gap = train_features.index[300:340]  # se quitan 40 horas cerca del inicio
+    _, with_gap = evaluate.feature_target_sample(train_ohlcv.drop(gap), train_features.drop(gap), offset=offset)
+    after = target.index > gap[-1] + pd.Timedelta(hours=evaluate.TARGET_HORIZON + 1)
+    pd.testing.assert_index_equal(with_gap.index[with_gap.index.isin(target.index[after])], target.index[after])
+    assert with_gap.index.difference(target.index).empty
+
+
 def test_target_never_uses_prices_after_train(market):
     """El objetivo de la última muestra termina dentro del train."""
     ohlcv, features = market

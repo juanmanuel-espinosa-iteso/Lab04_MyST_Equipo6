@@ -150,14 +150,18 @@ def stationarity_table(frame):
 
 # ---------------------------------------------------------------------- features contra el objetivo
 
-def feature_target_sample(train_ohlcv, train_features, step=SAMPLE_STEP):
-    """(X, y) del train: features en t y rendimiento de la apertura de t + 1 al cierre de t + 24 h, cada `step` barras.
+def feature_target_sample(train_ohlcv, train_features, step=SAMPLE_STEP, offset=0):
+    """(X, y) del train: features en t y rendimiento a 24 h de una posición que entra a la apertura de t + 1.
 
+    La muestra es una **malla de horas de reloj**: las t con (horas desde el inicio del train) mod `step` = `offset`.
     Con `step` = 25 dos objetivos consecutivos no se traslapan y, como 25 no comparte factores con 24, la muestra recorre
-    todas las horas del día (cada 24 barras tomaría siempre la misma y anularía las variables de calendario).
+    todas las horas del día (cada 24 h tomaría siempre la misma y anularía las variables de calendario). Fijarla en el
+    reloj, y no contar filas válidas, hace que un hueco o un NaN del objetivo solo quite sus puntos sin desplazar el resto
+    de la malla. `step` = 1 usa todas las horas (objetivos traslapados).
     """
-    target = data.forward_log_return(train_ohlcv, TARGET_HORIZON).reindex(train_features.index).dropna()
-    target = target.iloc[::step]
+    target = data.forward_log_return(train_ohlcv, TARGET_HORIZON).reindex(train_features.index)
+    hours = (target.index - train_ohlcv.index[0]) // pd.Timedelta(hours=1)
+    target = target[np.asarray(hours % step == offset)].dropna()
     return train_features.loc[target.index], target
 
 
