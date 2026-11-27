@@ -88,11 +88,12 @@ def run_training_stage():
     """Parte 05: check_env, líneas base y entrenamiento por fold y semilla con búsqueda de hiperparámetros en validación."""
 
 
-def run_evaluation_stage(ohlcv, features, agent_policies=None):
+def run_evaluation_stage(ohlcv, features, agent_policies=None, agent_env_params=None):
     """Parte 06: evaluación única en prueba, bitácora, benchmarks y métricas agregadas entre folds.
 
     `agent_policies` (fold -> `obs -> acción`) viene de la parte 05 con los hiperparámetros ya congelados. En cada prueba
-    se evalúan además las líneas base y los dos benchmarks con el mismo costo. Escribe `metrics_summary.csv` y
+    se evalúan además las líneas base y los dos benchmarks con el mismo costo. `agent_env_params` (fold -> dict) son los
+    parámetros del entorno congelados en la validación (p. ej. horizonte y barreras); sin ellos, los de `code/env.py`. Escribe `metrics_summary.csv` y
     `equity_curves_test_fold_{k}.png`; con agente, también `trade_log_fold_{k}.csv`, `max_drawdown_fold_{k}.png` y
     `trade_analysis.json` (§3.9).
     """
@@ -104,7 +105,8 @@ def run_evaluation_stage(ohlcv, features, agent_policies=None):
         policies = evaluate.baseline_policies(n_actions=3, seed=SEED + k)
         if k in agent_policies:
             policies = {evaluate.AGENT: agent_policies[k], **policies}
-        results[k] = evaluate.evaluate_test_fold(fold, policies, sp500, dates["test"], SEED + k, env.COST_PER_SIDE)
+        results[k] = evaluate.evaluate_test_fold(fold, policies, sp500, dates["test"], SEED + k, env.COST_PER_SIDE,
+                                                 (agent_env_params or {}).get(k))
         raw_test[k], btc_daily[k] = fold.raw_features["test"], results[k]["btc_buy_hold"]["daily"]
         shown = [evaluate.AGENT, "siempre_largo", "aleatorio", *evaluate.BENCHMARKS]
         plots.plot_equity_curves({n: results[k][n]["daily"] for n in shown if n in results[k]}, k, dates["test"],
@@ -130,8 +132,37 @@ def run_evaluation_stage(ohlcv, features, agent_policies=None):
     return results
 
 
-def run_sensitivity_stage():
-    """Parte 07: resolución intrabarra, retraso de una barra, ablación y segundo algoritmo."""
+def run_sensitivity_stage(ohlcv, features, agent_policies=None, agent_env_params=None):
+    """Parte 07 (JME): sensibilidad del resultado en prueba a los supuestos del simulador.
+
+    Por fold y política: resolución intrabarra contraria (`tp_first`), una barra de retraso en los datos, latencia de 2 s
+    como costo extra y +5/+10/+25 pb de slippage por lado, cada uno contra el escenario base (§3.3, §3.10, pregunta 6).
+    Con agente (`agent_policies`, fold -> `obs -> acción`) se corre el agente; sin él, las líneas base siempre largo y
+    aleatorio, para que el artefacto exista y la maquinaria quede probada. Escribe `artifacts/sensitivity.csv` con los
+    resultados por fold y la media y la desviación entre folds de cada Δ. La ablación y el segundo algoritmo (GC) van
+    en la parte 05.
+    """
+    rows = []
+    for k, dates in FOLDS.items():
+        fold = data.build_fold_dataset(ohlcv, features, k, dates)
+        if agent_policies and k in agent_policies:
+            makers = {evaluate.AGENT: (lambda policy=agent_policies[k]: policy)}
+        else:
+            makers = {name: (lambda name=name, k=k: evaluate.baseline_policies(3, SEED + k)[name])
+                      for name in ("siempre_largo", "aleatorio")}
+        for name, make_policy in makers.items():
+            table = evaluate.run_sensitivity(fold, make_policy, dates["test"], SEED + k, env.COST_PER_SIDE,
+                                             (agent_env_params or {}).get(k))
+            rows.append(table.assign(fold=k, strategy=name).reset_index())
+    per_fold = pd.concat(rows).set_index(["fold", "strategy", "scenario"])
+    deltas = per_fold[["delta_total_return", "delta_sharpe"]].groupby(level=["strategy", "scenario"])
+    summary = pd.concat({"media": deltas.mean(), "desv": deltas.std()}, names=["fold"])
+    pd.concat([per_fold, summary]).to_csv(ARTIFACTS / "sensitivity.csv", float_format="%.6g")
+    mean = summary.loc["media", "delta_total_return"]
+    shown = mean.xs("tp_first", level="scenario")
+    print("[sensibilidad] Δ rendimiento total medio con take-profit primero: "
+          + "; ".join(f"{n} {v:+.4f}" for n, v in shown.items())
+          + f"; operaciones ambiguas: {int(per_fold['n_ambiguous'].xs('base', level='scenario').sum())}")
 
 
 def main():
@@ -143,7 +174,7 @@ def main():
     run_eda_stage(ohlcv, features)
     run_training_stage()
     run_evaluation_stage(ohlcv, features)
-    run_sensitivity_stage()
+    run_sensitivity_stage(ohlcv, features)
     print(f"Pipeline terminado. Artefactos en {ARTIFACTS}")
 
 
