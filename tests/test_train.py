@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from gymnasium import spaces
 
-from code import data, train
+from code import data, env, reward, train
 
 OBS = spaces.Box(-5, 5, shape=(2,), dtype=np.float32)
 ACT = spaces.Discrete(3)
@@ -77,3 +77,29 @@ def test_baselines_with_costs(fold_1):
     flat = table.xs("siempre_plano", level="policy")
     assert (flat["log_growth"] == 0).all() and (flat["n_trades"] == 0).all()
     assert (table.xs("aleatorio", level="policy")["log_growth"] < 0).all()
+
+
+# ---------------------------------------------------------------------- rejilla y entrenamiento de una corrida
+
+def test_grid_is_small_and_complete():
+    """16 configuraciones distintas (2 × 2 × 2 × 2), cada una con todos los hiperparámetros buscados."""
+    assert len(train.GRID) == 16
+    assert {tuple(sorted(c.items())) for c in train.GRID}.__len__() == 16
+    assert all(set(c) == {"learning_rate", "gamma", "net_arch", "exploration_fraction"} for c in train.GRID)
+
+
+def test_dqn_uses_the_semi_markov_buffer_with_its_gamma(fold_1):
+    """El DQN usa el buffer semi-Markov con la misma γ que el modelo (y sin el modo que comparte obs y next_obs)."""
+    model = train.make_dqn(env.make_env(fold_1, "train", reward.net_log_return), train.GRID[3], seed=0)
+    assert isinstance(model.replay_buffer, train.SemiMarkovReplayBuffer)
+    assert model.replay_buffer.gamma == model.gamma == train.GRID[3]["gamma"]
+    assert not model.replay_buffer.optimize_memory_usage
+
+
+def test_training_is_reproducible_with_the_seed(fold_1):
+    """Misma configuración y semilla → mismo puntaje en validación; la curva de entrenamiento registra episodios."""
+    runs = [train.train_agent(fold_1, train.GRID[0], seed=7, total_timesteps=8_000) for _ in range(2)]  # > learning_starts
+    scores = [train.evaluate_policy(fold_1, "validation", train.as_policy(model), seed=7) for model, _ in runs]
+    assert scores[0] == scores[1]
+    curve = runs[0][1]
+    assert len(curve) > 0 and {"timesteps", "episode_reward"} <= set(curve.columns)

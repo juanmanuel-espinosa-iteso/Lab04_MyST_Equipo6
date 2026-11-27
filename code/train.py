@@ -7,10 +7,18 @@ La transición del entorno dura τ horas de reloj (1 al esperar, de 1 a H o más
 con γ por hora. `SemiMarkovReplayBuffer` guarda τ = `info["duration"]` de cada transición y entrega γ^τ como el
 descuento por muestra que el `train` de DQN de SB3 ya usa (`replay_data.discounts`). La ruina (`terminated`) corta el
 bootstrap; el fin de la ventana (`truncated`) no, porque el mercado sigue.
+
+Parámetros del módulo (abajo): rejilla `GRID`, `SEEDS`, `TOTAL_TIMESTEPS`, hiperparámetros fijos de DQN y criterio de
+selección `SELECTION_METRIC` (mediana entre semillas del crecimiento log en validación, fijado antes de ver resultados).
 """
+
+import itertools
 
 import numpy as np
 import pandas as pd
+import torch
+from stable_baselines3 import DQN
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
@@ -95,3 +103,49 @@ def run_baselines(fold_data, seed):
         for name, policy in baseline_policies(seed).items():
             rows[(split, name)] = evaluate_policy(fold_data, split, policy, seed)
     return pd.DataFrame.from_dict(rows, orient="index").rename_axis(["split", "policy"])
+
+
+# ---------------------------------------------------------------------- rejilla y entrenamiento de una corrida
+
+TOTAL_TIMESTEPS = 300_000  # decisiones por corrida (≈ 10 recorridos del train del fold 1)
+SEEDS = (0, 1, 2)
+SELECTION_METRIC = "log_growth"  # criterio (A): mediana entre semillas en validación
+SEARCH_SPACE = {
+    "learning_rate": (1e-4, 5e-4),
+    "gamma": (0.99, 0.995),  # por hora: vida media de ≈ 69 h y ≈ 138 h
+    "net_arch": ((64, 64), (128, 128)),
+    "exploration_fraction": (0.1, 0.3),
+}
+GRID = [dict(zip(SEARCH_SPACE, values)) for values in itertools.product(*SEARCH_SPACE.values())]
+DQN_FIXED = dict(buffer_size=100_000, learning_starts=5_000, batch_size=64, train_freq=4, gradient_steps=1,
+                 target_update_interval=2_000, exploration_final_eps=0.05)
+
+
+def make_dqn(trading_env, config, seed):
+    """DQN de SB3 con el buffer semi-Markov (γ^τ) y la configuración `config` de la rejilla."""
+    return DQN("MlpPolicy", trading_env, seed=seed, verbose=0, device="cpu",
+               learning_rate=config["learning_rate"], gamma=config["gamma"],
+               exploration_fraction=config["exploration_fraction"],
+               policy_kwargs=dict(net_arch=list(config["net_arch"])),
+               replay_buffer_class=SemiMarkovReplayBuffer, replay_buffer_kwargs=dict(gamma=config["gamma"]),
+               **DQN_FIXED)
+
+
+def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward_name=reward.DEFAULT_REWARD):
+    """Entrena un DQN en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
+
+    La curva tiene, por episodio, los pasos acumulados al terminarlo y su recompensa total (= ln del capital del
+    episodio, con la contribución principal).
+    """
+    torch.set_num_threads(1)
+    monitored = Monitor(env.make_env(fold_data, "train", reward.REWARDS[reward_name]))
+    model = make_dqn(monitored, config, seed)
+    model.learn(total_timesteps=total_timesteps)
+    curve = pd.DataFrame({"timesteps": np.cumsum(monitored.get_episode_lengths()),
+                          "episode_reward": monitored.get_episode_rewards()})
+    return model, curve
+
+
+def as_policy(model):
+    """Política determinista `obs -> acción` de un modelo de SB3 (la que se evalúa en validación y prueba)."""
+    return lambda obs: int(model.predict(obs, deterministic=True)[0])
