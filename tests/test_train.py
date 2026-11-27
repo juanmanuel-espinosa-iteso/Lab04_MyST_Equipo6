@@ -275,3 +275,41 @@ def test_fast_policy_matches_predict_for_ppo(fold_1):
         assert fast(obs) == expected
         obs, _, terminated, truncated, _ = trading_env.step(expected)
         done = terminated or truncated
+
+
+# ---------------------------------------------------------------------- corridas de ablación y de PPO, y sus tablas
+
+def test_ablation_jobs_use_the_chosen_config_and_score_test(fold_1, tmp_path):
+    """La ablación reentrena la configuración elegida, en su punto de control, una corrida por variante × semilla; esas
+    corridas sí se puntúan en prueba (se reportan, no eligen nada)."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.ablation_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_id=8, timesteps=1_000, seeds=[0])
+    assert [j["variant"] for j in jobs] == train.ABLATION_VARIANTS
+    assert all(j["config_id"] == 8 and j["checkpoints"] == (1_000,) and j["score_test"] for j in jobs)
+    results, _ = train.hyperparameter_search([j for j in jobs if j["variant"] in ("volume", "cuenta")], processes=1)
+    assert set(results["variant"]) == {"volume", "cuenta"}
+    assert {"val_log_growth", "test_log_growth", "test_sharpe", "test_n_trades"} <= set(results.columns)
+
+
+def test_ppo_search_jobs_use_the_ppo_grid(tmp_path):
+    """La búsqueda de PPO recorre su propia rejilla (8) con las mismas semillas y puntos de control que DQN."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, algo="ppo")
+    assert len(jobs) == len(train.PPO_GRID) * len(train.SEEDS)
+    assert {j["algo"] for j in jobs} == {"ppo"} and not any(j["score_test"] for j in jobs)
+
+
+def test_ablation_table_by_hand():
+    """Por fold y variante: medianas entre semillas en validación y prueba, y su diferencia contra la base."""
+    rows = []
+    for variant, val, test in (("ninguna", [0.1, 0.2, 0.3], [0.0, -0.1, 0.1]),
+                               ("volume", [-0.1, 0.0, 0.1], [-0.2, -0.3, -0.1])):
+        rows += [{"fold": 1, "variant": variant, "seed": s, "val_log_growth": v, "test_log_growth": t,
+                  "test_sharpe": t, "test_n_trades": 10} for s, (v, t) in enumerate(zip(val, test))]
+    table = train.ablation_table(pd.DataFrame(rows))
+    row = table.loc[(1, "volume")]
+    assert row["val_log_growth"] == pytest.approx(0.0) and row["delta_val"] == pytest.approx(-0.2)
+    assert row["test_log_growth"] == pytest.approx(-0.2) and row["delta_test"] == pytest.approx(-0.2)
+    assert table.loc[("media", "volume"), "delta_val"] == pytest.approx(-0.2)

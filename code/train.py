@@ -283,21 +283,36 @@ def model_path(models_dir, fold, config_id, seed, timesteps):
 
 
 def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS, total_timesteps=TOTAL_TIMESTEPS,
-                checkpoints=CHECKPOINTS):
-    """Corridas (configuración × semilla) de la búsqueda de un fold."""
-    config_ids = range(len(GRID)) if config_ids is None else config_ids
+                checkpoints=CHECKPOINTS, algo="dqn"):
+    """Corridas (configuración × semilla) de la búsqueda de un fold con el algoritmo `algo`; solo train y validación."""
+    config_ids = range(len(GRIDS[algo])) if config_ids is None else config_ids
     return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(models_dir), config_id=c, seed=s,
-                 total_timesteps=total_timesteps, checkpoints=tuple(checkpoints))
+                 total_timesteps=total_timesteps, checkpoints=tuple(checkpoints), algo=algo, variant="ninguna",
+                 score_test=False)
             for c in config_ids for s in seeds]
+
+
+def ablation_jobs(fold, dates, csv_path, models_dir, config_id, timesteps, seeds=SEEDS, variants=None):
+    """Corridas de la ablación de un fold: la configuración elegida de DQN, con sus pasos, por variante × semilla.
+
+    Se puntúan también en prueba porque la ablación **se reporta** (pregunta 7); no se usa para reelegir el modelo.
+    """
+    variants = ABLATION_VARIANTS if variants is None else variants
+    return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(Path(models_dir) / v),
+                 config_id=config_id, seed=s, total_timesteps=timesteps, checkpoints=(timesteps,), algo="dqn",
+                 variant=v, score_test=True)
+            for v in variants for s in seeds]
 
 
 def run_job(job):
     """Entrena una corrida y, en cada punto de control, guarda el modelo y lo puntúa en validación (y en train solo en el
-    último punto); nunca en prueba. Devuelve (filas, curva de entrenamiento)."""
+    último punto; en prueba solo si `score_test`, en la ablación). Devuelve (filas, curva de entrenamiento)."""
     start = time.perf_counter()
+    algo, variant = job.get("algo", "dqn"), job.get("variant", "ninguna")
     fold_data = _fold_data(job["csv_path"], job["fold"], job["dates"])
-    config = GRID[job["config_id"]]
-    base = {"fold": job["fold"], "config_id": job["config_id"], "seed": job["seed"],
+    observed = ablate(fold_data, variant)
+    config = GRIDS[algo][job["config_id"]]
+    base = {"fold": job["fold"], "algo": algo, "variant": variant, "config_id": job["config_id"], "seed": job["seed"],
             **{k: str(v) if k == "net_arch" else v for k, v in config.items()}}
     rows = []
 
@@ -305,15 +320,17 @@ def run_job(job):
         path = model_path(job["models_dir"], job["fold"], job["config_id"], job["seed"], timesteps)
         path.parent.mkdir(parents=True, exist_ok=True)
         model.save(path)
-        policy, row = as_policy(model), {**base, "timesteps": timesteps}
+        policy, row = as_policy(model, mask_account=variant == "cuenta"), {**base, "timesteps": timesteps}
         # La validación decide (todos los puntos); el train es informativo (sobreajuste): solo en el último punto.
-        splits = (("validation", "val"),) + ((("train", "train"),) if timesteps == max(job["checkpoints"]) else ())
+        last = timesteps == max(job["checkpoints"])
+        splits = (("validation", "val"),) + ((("train", "train"),) if last else ())
+        splits += (("test", "test"),) if last and job.get("score_test") else ()
         for split, prefix in splits:
-            row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
+            row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(observed, split, policy, job["seed"]).items()})
         rows.append(row)
 
-    _, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"],
-                           checkpoints=job["checkpoints"], on_checkpoint=checkpoint)
+    _, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"], checkpoints=job["checkpoints"],
+                           on_checkpoint=checkpoint, algo=algo, variant=variant)
     for row in rows:
         row["minutes"] = (time.perf_counter() - start) / 60
     return rows, curve
@@ -328,7 +345,8 @@ def hyperparameter_search(jobs, processes=1):
         outputs = [run_job(job) for job in jobs]
     results = pd.DataFrame([row for rows, _ in outputs for row in rows])
     results = results.sort_values(["fold", "config_id", "timesteps", "seed"], ignore_index=True)
-    curves = {(job["fold"], job["config_id"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
+    curves = {(job["fold"], job["config_id"], job["seed"]) if job.get("variant", "ninguna") == "ninguna"
+              else (job["fold"], job["variant"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
     return results, curves
 
 
@@ -356,9 +374,10 @@ def _signature(jobs):
     y el archivo de datos (su hash). Si cambia cualquiera, los modelos guardados ya no corresponden."""
     import hashlib
 
-    keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints")
+    keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints", "algo", "variant", "score_test")
     csv_files = sorted({job["csv_path"] for job in jobs})
-    return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRID), "dqn_fixed": str(DQN_FIXED),
+    return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRIDS), "dqn_fixed": str(DQN_FIXED),
+            "ppo_fixed": str(PPO_FIXED),
             "reward": reward.DEFAULT_REWARD, "env": {name: str(getattr(env, name)) for name in ENV_PARAMETERS},
             "features": list(data.FEATURES),
             "data": {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in csv_files}}
@@ -380,3 +399,23 @@ def load_search(path, jobs):
     if saved["signature"] != _signature(jobs):
         return None
     return saved["results"], saved["curves"]
+
+
+# ---------------------------------------------------------------------- tablas de la pregunta 7
+
+def ablation_table(results):
+    """`ablation.csv`: por fold y variante, la mediana entre semillas del crecimiento log en validación y en prueba, el
+    Sharpe y las operaciones en prueba, y la diferencia contra la base (`ninguna`); al final, la media entre folds.
+
+    Un `delta_val` negativo dice que quitar la familia empeora la validación: la familia aporta."""
+    cols = ["val_log_growth", "test_log_growth", "test_sharpe", "test_n_trades"]
+    table = results.groupby(["fold", "variant"])[cols].median()
+    folds = table.index.get_level_values("fold")
+    base = table.xs("ninguna", level="variant")
+    table["delta_val"] = table["val_log_growth"] - base["val_log_growth"].reindex(folds).to_numpy()
+    table["delta_test"] = table["test_log_growth"] - base["test_log_growth"].reindex(folds).to_numpy()
+    variants = [v for v in ABLATION_VARIANTS if v in table.index.get_level_values("variant")]
+    table = table.reindex(pd.MultiIndex.from_product([sorted(set(folds)), variants], names=["fold", "variant"]))
+    mean = table.groupby(level="variant").mean().reindex(variants)
+    mean.index = pd.MultiIndex.from_product([["media"], variants], names=["fold", "variant"])
+    return pd.concat([table, mean])
