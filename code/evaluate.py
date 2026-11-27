@@ -482,6 +482,21 @@ def sensitivity_scenarios(base_cost, latency):
     return scenarios
 
 
+def same_trades_share(base_log, other_log):
+    """Proporción de las operaciones de `base_log` que `other_log` repite con la misma hora de decisión y el mismo lado.
+
+    Separa los dos efectos de cambiar un supuesto: con 1 las decisiones son las mismas y el cambio de resultado es
+    directo (p. ej. el costo extra de cada operación); por debajo de 1, el agente tomó otras decisiones, porque su estado
+    incluye variables de la cuenta (`equity_drawdown`, `last_trade_return`, `hours_flat`) que cambian con el capital.
+    Sin operaciones en la base, NaN.
+    """
+    if not len(base_log):
+        return np.nan
+    keys = ["decision_time", "side"]
+    shared = base_log[keys].merge(other_log[keys].drop_duplicates(), on=keys, how="inner")
+    return len(shared) / len(base_log)
+
+
 def run_sensitivity(fold_data, make_policy, test_dates, seed, base_cost, env_params=None):
     """Corre la política en la prueba de un fold bajo cada escenario y compara contra el escenario base.
 
@@ -490,14 +505,15 @@ def run_sensitivity(fold_data, make_policy, test_dates, seed, base_cost, env_par
     `env_params` son los parámetros congelados del entorno (los mismos de la evaluación); cada escenario cambia uno.
 
     Por escenario: métricas de §3.7 (capital diario), costo por lado usado, % de operaciones con stop y take-profit en
-    la misma barra y diferencia de rendimiento total y Sharpe contra la base. La política es la misma en todos (congelada);
+    la misma barra, proporción de operaciones de la base que se repiten (`same_trades_share`) y diferencia de
+    rendimiento total y Sharpe contra la base. La política es la misma en todos (congelada);
     solo cambia el supuesto del simulador, así que la diferencia mide cuánto depende el resultado de ese supuesto.
     """
     from code import env
 
     start, end = test_dates
     latency = latency_cost(fold_data.raw_features["train"])
-    rows = {}
+    rows, logs = {}, {}
     for name, params in sensitivity_scenarios(base_cost, latency).items():
         params = {"cost": base_cost, **(env_params or {}), **params}
         trading_env = env.make_env(fold_data, "test", lambda outcome: 0.0, mode="eval", **params)
@@ -506,7 +522,9 @@ def run_sensitivity(fold_data, make_policy, test_dates, seed, base_cost, env_par
         metrics["cost_per_side"] = params["cost"]
         metrics["ambiguous_share"] = log["intrabar_ambiguous"].mean() if len(log) else np.nan
         metrics["n_ambiguous"] = int(log["intrabar_ambiguous"].sum()) if len(log) else 0
-        rows[name] = metrics
+        rows[name], logs[name] = metrics, log
+    for name in rows:
+        rows[name]["same_trades_share"] = same_trades_share(logs["base"], logs[name])
     table = pd.DataFrame(rows).T.rename_axis("scenario")
     table["delta_total_return"] = table["total_return"] - table.loc["base", "total_return"]
     table["delta_sharpe"] = table["sharpe"] - table.loc["base", "sharpe"]

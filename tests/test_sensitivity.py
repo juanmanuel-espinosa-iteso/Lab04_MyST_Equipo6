@@ -55,6 +55,7 @@ def test_intrabar_scenario_moves_only_the_ambiguous_trade():
     assert table.loc["tp_first", "total_return"] == pytest.approx(net(102))
     assert table.loc["tp_first", "delta_total_return"] == pytest.approx(net(102) - net(98))
     assert table.loc["base", "ambiguous_share"] == 1.0
+    assert table.loc["tp_first", "same_trades_share"] == 1.0  # misma decisión; cambia solo la salida
 
 
 def test_extra_cost_keeps_the_path_and_charges_each_side():
@@ -71,3 +72,13 @@ def test_extra_cost_keeps_the_path_and_charges_each_side():
     base_r = base["net_pnl"] / base["equity_before"]
     extra_r = extra["net_pnl"] / extra["equity_before"]
     np.testing.assert_allclose(base_r - extra_r, 0.0010 * (1 + base["exit_price"] / base["entry_price"]), atol=1e-12)
+
+
+def test_same_trades_share_by_hand():
+    """3 operaciones en la base: la otra repite 2 (misma hora y lado), cambia el lado de 1 y agrega una nueva → 2/3."""
+    t = pd.to_datetime(["2024-01-01 00:00", "2024-01-02 00:00", "2024-01-03 00:00", "2024-01-04 00:00"], utc=True)
+    base = pd.DataFrame({"decision_time": t[:3], "side": [1, -1, 1]})
+    other = pd.DataFrame({"decision_time": t[[0, 1, 2, 3]], "side": [1, 1, 1, -1]})
+    assert evaluate.same_trades_share(base, other) == pytest.approx(2 / 3)
+    assert evaluate.same_trades_share(base, base) == 1.0
+    assert np.isnan(evaluate.same_trades_share(base.iloc[:0], other))
