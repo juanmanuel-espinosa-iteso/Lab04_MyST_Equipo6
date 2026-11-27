@@ -106,6 +106,18 @@ def run_eda_stage(ohlcv, features):
           f"features con IM sobre el azar por fold: {[int((t.mi > t.mi_null_max_95).sum()) for t in analyses.values()]}")
 
 
+def run_search(jobs, cache, stage):
+    """Corre las corridas en paralelo y guarda la búsqueda junto a los modelos; con `LAB04_REUSE_MODELS=1` la reusa si
+    se hizo con los mismos parámetros. Devuelve (resultados, curvas, la búsqueda reusada o None)."""
+    saved = train.load_search(cache, jobs) if REUSE_MODELS else None
+    if saved is None:
+        results, curves = train.hyperparameter_search(jobs, processes=PROCESSES)
+        train.save_search(cache, jobs, results, curves)
+        return results, curves, None
+    print(f"[{stage}] LAB04_REUSE_MODELS=1: se reusan los {len(jobs)} modelos de {cache.parent} (misma búsqueda)")
+    return (*saved, saved)
+
+
 def run_training_stage(ohlcv, features):
     """Parte 05: check_env, líneas base y entrenamiento por fold y semilla con búsqueda de hiperparámetros en validación.
 
@@ -126,13 +138,7 @@ def run_training_stage(ohlcv, features):
     baselines.to_csv(ARTIFACTS / "baselines.csv", float_format="%.6g")
 
     jobs = [job for k, dates in FOLDS.items() for job in train.search_jobs(k, dates, BTC_CSV, MODELS)]
-    saved = train.load_search(SEARCH_CACHE, jobs) if REUSE_MODELS else None
-    if saved is None:
-        results, curves = train.hyperparameter_search(jobs, processes=PROCESSES)
-        train.save_search(SEARCH_CACHE, jobs, results, curves)
-    else:
-        results, curves = saved
-        print(f"[entrenamiento] LAB04_REUSE_MODELS=1: se reusan los {len(jobs)} modelos de {MODELS} (misma búsqueda)")
+    results, curves, saved = run_search(jobs, SEARCH_CACHE, "entrenamiento")
     policies, chosen = {}, {}
     for k in FOLDS:
         fold_results = results[results["fold"] == k]
@@ -246,6 +252,72 @@ def run_sensitivity_stage(ohlcv, features, agent_policies=None, agent_env_params
           + f"; operaciones ambiguas: {int(per_fold['n_ambiguous'].xs('base', level='scenario').sum())}")
 
 
+def chosen_models():
+    """Configuración, pasos y semilla elegidos por fold en la parte 05 (de `run_metadata.json`)."""
+    chosen = json.loads((ARTIFACTS / "run_metadata.json").read_text(encoding="utf-8"))["chosen"]
+    return {int(k): c for k, c in chosen.items()}
+
+
+def run_ablation_stage():
+    """Parte 07 (GC), pregunta 7: ablación por familias de la observación.
+
+    Reentrena la configuración elegida de cada fold, con sus pasos y sus 3 semillas, quitando una familia de features a
+    la vez (o la cuenta) y la base sin quitar nada, que reproduce el modelo elegido. Escribe `artifacts/ablation.csv`
+    (medianas entre semillas en validación y prueba, y la diferencia contra la base). Se reporta; no reelige el modelo.
+    """
+    chosen = chosen_models()
+    jobs = [job for k, dates in FOLDS.items()
+            for job in train.ablation_jobs(k, dates, BTC_CSV, MODELS / "ablation", chosen[k]["config_id"],
+                                           chosen[k]["timesteps"])]
+    results, _, _ = run_search(jobs, MODELS / "ablation" / "search.pkl", "ablación")
+    table = train.ablation_table(results)
+    table.to_csv(ARTIFACTS / "ablation.csv", float_format="%.6g")
+    base = results[results["variant"] == "ninguna"]
+    for k in FOLDS:  # la base reproduce la búsqueda (mismo modelo): verificación barata de la ablación
+        expected = pd.read_csv(ARTIFACTS / f"validation_results_fold_{k}.csv")
+        expected = expected[(expected["config_id"] == chosen[k]["config_id"])
+                            & (expected["timesteps"] == chosen[k]["timesteps"])].set_index("seed")["val_log_growth"]
+        got = base[base["fold"] == k].set_index("seed")["val_log_growth"]
+        if not np.allclose(got.sort_index(), expected.sort_index(), atol=1e-5):
+            raise RuntimeError(f"la base de la ablación no reproduce el modelo elegido del fold {k}")
+    mean = table.loc["media", "delta_val"].drop("ninguna")
+    print("[ablación] Δ crecimiento log en validación al quitar cada familia (media de folds): "
+          + "; ".join(f"{v} {d:+.3f}" for v, d in mean.items()))
+
+
+def run_second_algorithm_stage(ohlcv, features):
+    """Parte 07 (GC), pregunta 7: segundo algoritmo (PPO) con la misma búsqueda en validación y el mismo criterio.
+
+    Escribe `artifacts/validation_results_ppo.csv` y `artifacts/algorithm_comparison.csv`: por fold y algoritmo, el
+    candidato elegido solo con validación y el resultado de su modelo congelado en prueba (una vez).
+    """
+    jobs = [job for k, dates in FOLDS.items()
+            for job in train.search_jobs(k, dates, BTC_CSV, MODELS / "ppo", algo="ppo")]
+    ppo_results, _, _ = run_search(jobs, MODELS / "ppo" / "search.pkl", "segundo algoritmo")
+    ppo_results.to_csv(ARTIFACTS / "validation_results_ppo.csv", index=False, float_format="%.6g")
+    rows = {}
+    for k, dates in FOLDS.items():
+        fold = data.build_fold_dataset(ohlcv, features, k, dates)
+        searches = {"dqn": (pd.read_csv(ARTIFACTS / f"validation_results_fold_{k}.csv"), MODELS, train.DQN),
+                    "ppo": (ppo_results[ppo_results["fold"] == k], MODELS / "ppo", train.PPO)}
+        for algo, (results, models_dir, cls) in searches.items():
+            summary = train.chosen_summary(results)
+            path = train.model_path(models_dir, k, summary["config_id"], summary["seed"], summary["timesteps"])
+            policy = train.as_policy(cls.load(path, device="cpu"))
+            test = train.evaluate_policy(fold, "test", policy, SEED + k)
+            rows[(k, algo)] = {**summary, **train.GRIDS[algo][summary["config_id"]],
+                               **{f"test_{m}": v for m, v in test.items()}}
+    table = pd.DataFrame.from_dict(rows, orient="index").rename_axis(["fold", "algo"])
+    table["net_arch"] = table["net_arch"].astype(str)
+    numeric = ["val_median", "val_min", "val_max", "candidates_above_zero", "test_log_growth", "test_sharpe",
+               "test_n_trades"]
+    mean = table[numeric].groupby(level="algo").mean()
+    mean.index = pd.MultiIndex.from_product([["media"], mean.index], names=["fold", "algo"])
+    pd.concat([table, mean]).to_csv(ARTIFACTS / "algorithm_comparison.csv", float_format="%.6g")
+    print("[segundo algoritmo] crecimiento log medio en prueba: "
+          + "; ".join(f"{a} {mean.loc[('media', a), 'test_log_growth']:+.3f}" for a in ("dqn", "ppo")))
+
+
 def main():
     """Corre el pipeline completo de punta a punta con la semilla global."""
     np.random.seed(SEED)
@@ -256,6 +328,8 @@ def main():
     agent_policies = run_training_stage(ohlcv, features)
     run_evaluation_stage(ohlcv, features, agent_policies)
     run_sensitivity_stage(ohlcv, features, agent_policies)
+    run_ablation_stage()
+    run_second_algorithm_stage(ohlcv, features)
     print(f"Pipeline terminado. Artefactos en {ARTIFACTS}")
 
 
