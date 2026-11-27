@@ -14,16 +14,18 @@ Los pasos de entrenamiento también se eligen en validación: cada corrida se pu
 `CHECKPOINTS` (parada temprana), porque con 300k pasos el agente memoriza el train.
 """
 
+import dataclasses
 import itertools
 import multiprocessing
 import pickle
 import time
 from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import pandas as pd
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
@@ -139,6 +141,26 @@ def make_dqn(trading_env, config, seed):
                **DQN_FIXED)
 
 
+# Segundo algoritmo (pregunta 7): PPO de SB3, on-policy. Descuenta con γ por decisión (su GAE no admite τ variable):
+# es una aproximación declarada frente al γ^τ del DQN. Rejilla de 8 (red fija en [64, 64]) para caber en el presupuesto.
+PPO_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "gamma": (0.99, 0.995),
+    "ent_coef": (0.0, 0.01),
+}
+PPO_GRID = [dict(zip(PPO_SEARCH_SPACE, values), net_arch=(64, 64))
+            for values in itertools.product(*PPO_SEARCH_SPACE.values())]
+PPO_FIXED = dict(n_steps=2048, batch_size=64, n_epochs=10, gae_lambda=0.95, clip_range=0.2)
+GRIDS = {"dqn": GRID, "ppo": PPO_GRID}
+
+
+def make_ppo(trading_env, config, seed):
+    """PPO de SB3 con la configuración `config` de `PPO_GRID`."""
+    return PPO("MlpPolicy", trading_env, seed=seed, verbose=0, device="cpu", learning_rate=config["learning_rate"],
+               gamma=config["gamma"], ent_coef=config["ent_coef"], policy_kwargs=dict(net_arch=list(config["net_arch"])),
+               **PPO_FIXED)
+
+
 class _Checkpoints(BaseCallback):
     """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control."""
 
@@ -152,16 +174,61 @@ class _Checkpoints(BaseCallback):
         return True
 
 
+# ---------------------------------------------------------------------- variantes de la observación (ablación)
+
+N_ACCOUNT = len(env.ACCOUNT_FEATURES)  # las 3 variables de la cuenta van al final de la observación
+ABLATION_VARIANTS = ["ninguna", *data.FEATURE_FAMILIES, "cuenta"]
+
+
+class MaskAccount(gym.ObservationWrapper):
+    """Pone en 0 las variables de la cuenta de la observación (ablación de la familia `cuenta`)."""
+
+    def observation(self, observation):
+        return _mask_account(observation)
+
+
+def _mask_account(observation):
+    masked = np.array(observation, dtype=np.float32, copy=True)
+    masked[..., -N_ACCOUNT:] = 0.0
+    return masked
+
+
+def ablate(fold_data, variant):
+    """`FoldData` sin las features de la familia `variant` en todas las particiones (la observación se achica).
+
+    Solo cambia la observación: `raw_features` queda igual, así que las barreras siguen usando la volatilidad estimada.
+    `ninguna` y `cuenta` (que se quita con `MaskAccount`) no cambian los datos.
+    """
+    if variant in ("ninguna", "cuenta"):
+        return fold_data
+    if variant not in data.FEATURE_FAMILIES:
+        raise ValueError(f"variante desconocida: {variant}")
+    drop = data.FEATURE_FAMILIES[variant]
+    return dataclasses.replace(fold_data, features={s: f.drop(columns=drop) for s, f in fold_data.features.items()})
+
+
+def make_train_env(fold_data, variant="ninguna", reward_name=reward.DEFAULT_REWARD):
+    """Entorno de entrenamiento (episodios aleatorios del train) de la variante de la observación."""
+    trading_env = env.make_env(ablate(fold_data, variant), "train", reward.REWARDS[reward_name])
+    return MaskAccount(trading_env) if variant == "cuenta" else trading_env
+
+
+def make_model(algo, trading_env, config, seed):
+    """Modelo sin entrenar del algoritmo `algo` ("dqn" o "ppo") con una configuración de su rejilla."""
+    return {"dqn": make_dqn, "ppo": make_ppo}[algo](trading_env, config, seed)
+
+
 def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward_name=reward.DEFAULT_REWARD,
-                checkpoints=(), on_checkpoint=None):
-    """Entrena un DQN en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
+                checkpoints=(), on_checkpoint=None, algo="dqn", variant="ninguna"):
+    """Entrena un agente en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
 
     La curva tiene, por episodio, los pasos acumulados al terminarlo y su recompensa total (= ln del capital del
     episodio, con la contribución principal). `on_checkpoint(model, pasos)` se llama en cada punto de `checkpoints`.
+    `algo` es "dqn" (parte 05) o "ppo" (segundo algoritmo); `variant`, la familia que se quita (ablación).
     """
     torch.set_num_threads(1)
-    monitored = Monitor(env.make_env(fold_data, "train", reward.REWARDS[reward_name]))
-    model = make_dqn(monitored, config, seed)
+    monitored = Monitor(make_train_env(fold_data, variant, reward_name))
+    model = make_model(algo, monitored, config, seed)
     callback = _Checkpoints(checkpoints, on_checkpoint) if on_checkpoint else None
     model.learn(total_timesteps=total_timesteps, callback=callback)
     curve = pd.DataFrame({"timesteps": np.cumsum(monitored.get_episode_lengths()),
@@ -169,21 +236,28 @@ def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward
     return model, curve
 
 
-def as_policy(model):
-    """Política determinista `obs -> acción` de un DQN: la acción de mayor Q̄ en la red (la que se evalúa en validación
-    y prueba).
+def as_policy(model, mask_account=False):
+    """Política determinista `obs -> acción` de un modelo de SB3 (la que se evalúa en validación y prueba).
 
-    Es el mismo argmax que `model.predict(obs, deterministic=True)` (prueba `test_fast_policy_matches_sb3_predict`), pero
-    llamando directo a la red Q, sin la preparación por observación de SB3: los recorridos completos son varias veces
-    más rápidos.
+    DQN: la acción de mayor Q̄, llamando directo a la red Q; PPO: la moda de la distribución de la política. Es lo mismo
+    que `model.predict(obs, deterministic=True)` (prueba `test_fast_policy_matches_sb3_predict`), sin la preparación por
+    observación de SB3, así que los recorridos completos son varias veces más rápidos. Con `mask_account`, la cuenta se
+    pone en 0 antes de decidir (ablación `cuenta`).
     """
-    q_net = model.q_net
-    q_net.set_training_mode(False)
+    model.policy.set_training_mode(False)
+    if hasattr(model, "q_net"):
+        def decide(obs_t):
+            return model.q_net(obs_t).argmax(dim=1)
+    else:
+        def decide(obs_t):
+            return model.policy.get_distribution(obs_t).mode()
 
     def policy(obs):
+        if mask_account:
+            obs = _mask_account(obs)
         with torch.no_grad():
-            q_values = q_net(torch.as_tensor(obs, dtype=torch.float32).reshape(1, -1))
-        return int(q_values.argmax(dim=1)[0])
+            action = decide(torch.as_tensor(obs, dtype=torch.float32).reshape(1, -1))
+        return int(action[0])
 
     return policy
 

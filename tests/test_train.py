@@ -216,3 +216,62 @@ def test_reuse_is_refused_if_the_environment_or_features_changed(tmp_path, monke
     assert train.load_search(path, jobs) is not None
     monkeypatch.setattr({"env": env, "data": data}[module], name, value)
     assert train.load_search(path, jobs) is None
+
+
+# ---------------------------------------------------------------------- ablación por familias (parte 07, GC)
+
+def test_ablation_variants_cover_every_family_and_the_account():
+    """Una variante por familia de features, más la cuenta y la base sin quitar nada."""
+    assert train.ABLATION_VARIANTS == ["ninguna", *data.FEATURE_FAMILIES, "cuenta"]
+
+
+@pytest.mark.parametrize("family", list(data.FEATURE_FAMILIES))
+def test_ablate_drops_one_family_from_the_observation(fold_1, family):
+    """Quitar una familia la saca de las features de todas las particiones (la observación se achica), pero no de las
+    features sin normalizar: las barreras siguen usando la volatilidad estimada."""
+    ablated = train.ablate(fold_1, family)
+    for split in train.SPLITS:
+        assert list(ablated.features[split].columns) == [c for c in data.FEATURES
+                                                         if c not in data.FEATURE_FAMILIES[family]]
+        assert ablated.raw_features[split] is fold_1.raw_features[split]
+    trading_env = train.make_train_env(ablated, "ninguna")
+    assert trading_env.observation_space.shape == (len(data.FEATURES) - len(data.FEATURE_FAMILIES[family]) + 3,)
+
+
+def test_account_ablation_zeroes_the_account_in_training_and_evaluation(fold_1):
+    """Sin cuenta: al entrenar, las 3 variables de la cuenta llegan en 0; al evaluar, la política las pone en 0 antes de
+    decidir, así que dos observaciones que solo difieren en la cuenta dan la misma acción."""
+    trading_env = train.make_train_env(fold_1, "cuenta")
+    obs, _ = trading_env.reset(seed=0)
+    for _ in range(50):
+        obs, *_ = trading_env.step(env.LONG)
+        assert np.all(obs[-3:] == 0)
+    model = train.make_model("dqn", trading_env, train.GRID[0], seed=0)
+    policy = train.as_policy(model, mask_account=True)
+    base = np.zeros(trading_env.observation_space.shape, dtype=np.float32)
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        other = base.copy()
+        other[-3:] = rng.normal(size=3)
+        assert policy(other) == policy(base)
+
+
+# ---------------------------------------------------------------------- segundo algoritmo: PPO (parte 07, GC)
+
+def test_ppo_grid_is_small(fold_1):
+    """8 configuraciones de PPO (2 × 2 × 2), con la red fija en [64, 64] como la elegida de DQN."""
+    assert len(train.PPO_GRID) == 8 and all(c["net_arch"] == (64, 64) for c in train.PPO_GRID)
+    assert isinstance(train.make_model("ppo", train.make_train_env(fold_1), train.PPO_GRID[0], 0), train.PPO)
+
+
+def test_fast_policy_matches_predict_for_ppo(fold_1):
+    """Con PPO, la política rápida (moda de la distribución) elige lo mismo que `model.predict(deterministic=True)`."""
+    model, _ = train.train_agent(fold_1, train.PPO_GRID[0], seed=3, total_timesteps=4_096, algo="ppo")
+    trading_env = env.make_env(fold_1, "validation", reward.net_log_return, mode="eval")
+    obs, _ = trading_env.reset(seed=0)
+    fast, done = train.as_policy(model), False
+    while not done:
+        expected = int(model.predict(obs, deterministic=True)[0])
+        assert fast(obs) == expected
+        obs, _, terminated, truncated, _ = trading_env.step(expected)
+        done = terminated or truncated
