@@ -19,10 +19,10 @@ penalización considerable en el criterio de lógica del modelo). Cada elemento 
 - [x] **Información exógena W_{t+1}:** la trayectoria OHLCV hasta el cierre de la posición.
 - [x] **Función de transición S^M(S_t, x_t, W_{t+1}):** incluye la lógica de cierre (horizonte, stop, take-profit, cierre
       explícito), la resolución intrabarra y la duración τ (semi-Markov).
-- [ ] **Contribución C(S_t, x_t, W_{t+1})** con costos, por paso o terminal.
-- [ ] **Objetivo:** max sobre políticas de E[Σ γ^{t_n} C(...)] con el descuento por duración real.
-- [ ] **Política:** clase de política de Powell (aproximación de la función de valor con DQN) y cómo se busca.
-- [ ] Para cada decisión de diseño (contenido del estado, espacio de decisión, episodio, parámetros del periodo de tenencia,
+- [x] **Contribución C(S_t, x_t, W_{t+1})** con costos, por paso o terminal.
+- [x] **Objetivo:** max sobre políticas de E[Σ γ^{t_n} C(...)] con el descuento por duración real.
+- [x] **Política:** clase de política de Powell (aproximación de la función de valor con DQN) y cómo se busca.
+- [x] Para cada decisión de diseño (contenido del estado, espacio de decisión, episodio, parámetros del periodo de tenencia,
       contribución): elección, al menos una alternativa considerada y por qué se rechazó **con referencia a datos u
       observaciones empíricas** (tabla desde `decisiones.md`).
 - [x] Definición de episodio explícita y qué se pierde con ella (el mercado es continuo).
@@ -30,8 +30,8 @@ penalización considerable en el criterio de lógica del modelo). Cada elemento 
 
 **Estado (2026-11-27, JME):** `docs/powell.md` con las secciones 1–5, 7 y 8 (narrativa, estado R/I/B, decisión,
 información exógena, transición semi-Markov con el gestor de posiciones, episodio, ejemplo numérico y tabla de
-decisiones), rama `feat/jme-powell`. Falta la sección 6 (GC): contribución, objetivo con γ^τ y clase de política; y
-marcar la fila de decisiones de diseño cuando la contribución esté redactada.
+decisiones), rama `feat/jme-powell`. **Estado (2026-11-27, GC):** sección 6 (contribución terminal, objetivo con γ^τ, política VFA + PFA y cómo se busca)
+y filas de contribución y clase de política en la tabla de la sección 8.
 
 ## Criterio de terminado
 
