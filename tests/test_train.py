@@ -284,7 +284,8 @@ def test_ablation_jobs_use_the_chosen_config_and_score_test(fold_1, tmp_path):
     corridas sí se puntúan en prueba (se reportan, no eligen nada)."""
     from main import BTC_CSV, FOLDS
 
-    jobs = train.ablation_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_id=8, timesteps=1_000, seeds=[0])
+    jobs = train.ablation_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_id=8, timesteps=1_000, seeds=[0],
+                               total_timesteps=2_000)
     assert [j["variant"] for j in jobs] == train.ABLATION_VARIANTS
     assert all(j["config_id"] == 8 and j["checkpoints"] == (1_000,) and j["score_test"] for j in jobs)
     results, _ = train.hyperparameter_search([j for j in jobs if j["variant"] in ("volume", "cuenta")], processes=1)
@@ -313,3 +314,16 @@ def test_ablation_table_by_hand():
     assert row["val_log_growth"] == pytest.approx(0.0) and row["delta_val"] == pytest.approx(-0.2)
     assert row["test_log_growth"] == pytest.approx(-0.2) and row["delta_test"] == pytest.approx(-0.2)
     assert table.loc[("media", "volume"), "delta_val"] == pytest.approx(-0.2)
+
+
+def test_training_stops_at_the_last_checkpoint_with_the_same_schedule(fold_1):
+    """Con un solo punto de control antes del total, el entrenamiento se detiene ahí, pero con el calendario de
+    exploración del total: el modelo es el mismo que el de ese punto en una corrida completa."""
+    saved = {}
+    full, _ = train.train_agent(fold_1, train.GRID[0], seed=5, total_timesteps=8_000, checkpoints=(6_000, 8_000),
+                                on_checkpoint=lambda m, n: saved.setdefault(n, train.evaluate_policy(
+                                    fold_1, "validation", train.as_policy(m), 5)))
+    short, curve = train.train_agent(fold_1, train.GRID[0], seed=5, total_timesteps=8_000, checkpoints=(6_000,),
+                                     on_checkpoint=lambda m, n: None)
+    assert short.num_timesteps == 6_000
+    assert train.evaluate_policy(fold_1, "validation", train.as_policy(short), 5) == saved[6_000]

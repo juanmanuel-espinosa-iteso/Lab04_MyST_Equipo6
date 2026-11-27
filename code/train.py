@@ -162,7 +162,8 @@ def make_ppo(trading_env, config, seed):
 
 
 class _Checkpoints(BaseCallback):
-    """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control."""
+    """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control y detiene el entrenamiento después del
+    último (los calendarios, como el de exploración ε, siguen siendo los del total de pasos)."""
 
     def __init__(self, checkpoints, on_checkpoint):
         super().__init__()
@@ -171,7 +172,7 @@ class _Checkpoints(BaseCallback):
     def _on_step(self):
         while self.pending and self.num_timesteps >= self.pending[0]:
             self.on_checkpoint(self.model, self.pending.pop(0))
-        return True
+        return bool(self.pending)
 
 
 # ---------------------------------------------------------------------- variantes de la observación (ablación)
@@ -292,14 +293,17 @@ def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS,
             for c in config_ids for s in seeds]
 
 
-def ablation_jobs(fold, dates, csv_path, models_dir, config_id, timesteps, seeds=SEEDS, variants=None):
+def ablation_jobs(fold, dates, csv_path, models_dir, config_id, timesteps, seeds=SEEDS, variants=None,
+                  total_timesteps=TOTAL_TIMESTEPS):
     """Corridas de la ablación de un fold: la configuración elegida de DQN, con sus pasos, por variante × semilla.
 
-    Se puntúan también en prueba porque la ablación **se reporta** (pregunta 7); no se usa para reelegir el modelo.
+    Se entrena con el calendario de `total_timesteps` (como en la búsqueda) y se detiene en `timesteps`, así que la
+    variante `ninguna` reproduce el modelo elegido. Se puntúan también en prueba porque la ablación **se reporta**
+    (pregunta 7); no se usa para reelegir el modelo.
     """
     variants = ABLATION_VARIANTS if variants is None else variants
     return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(Path(models_dir) / v),
-                 config_id=config_id, seed=s, total_timesteps=timesteps, checkpoints=(timesteps,), algo="dqn",
+                 config_id=config_id, seed=s, total_timesteps=total_timesteps, checkpoints=(timesteps,), algo="dqn",
                  variant=v, score_test=True)
             for v in variants for s in seeds]
 
