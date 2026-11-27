@@ -33,24 +33,29 @@ REPETIR hasta cumplir el criterio de terminado:
 
 ## Checklist
 
-- [ ] `check_env` antes de cualquier entrenamiento (en el pipeline, no solo en la prueba).
-- [ ] **Líneas base** con costos en cada fold y partición: aleatorio, siempre largo, siempre plano → `baselines.csv`.
+- [x] `check_env` antes de cualquier entrenamiento (en el pipeline, no solo en la prueba).
+- [x] **Líneas base** con costos en cada fold y partición: aleatorio, siempre largo, siempre plano → `baselines.csv`.
       Si el aleatorio gana dinero, parar y revisar el simulador.
-- [ ] Algoritmo principal con justificación (propuesta: DQN; Q-learning con red, off-policy, coherente con S18–S19).
-- [ ] **Replay buffer semi-Markov:** cada transición guarda (estado en la apertura, acción, recompensa al cierre, estado
+- [x] Algoritmo principal con justificación (propuesta: DQN; Q-learning con red, off-policy, coherente con S18–S19).
+- [x] **Replay buffer semi-Markov:** cada transición guarda (estado en la apertura, acción, recompensa al cierre, estado
       al cierre, duración real τ) y el objetivo usa γ^τ (subclase del buffer y del `train` de DQN). Si se usa un
       algoritmo sin esto, declarar la aproximación.
-- [ ] **Varias semillas** (mínimo 3) por configuración; dispersión entre semillas reportada.
-- [ ] **Búsqueda de hiperparámetros** en validación: rejilla chica y documentada (p. ej. tasa de aprendizaje, γ, tamaño de
+- [x] **Varias semillas** (mínimo 3) por configuración; dispersión entre semillas reportada.
+- [x] **Búsqueda de hiperparámetros** en validación: rejilla chica y documentada (p. ej. tasa de aprendizaje, γ, tamaño de
       red, exploración y, si aplica, H/SL/TP) → `validation_results_fold_{k}.csv` con todas las configuraciones × semillas.
-- [ ] **Criterio de selección** fijado antes de ver resultados (p. ej. mediana entre semillas del Sharpe neto en
+- [x] **Criterio de selección** fijado antes de ver resultados (p. ej. mediana entre semillas del Sharpe neto en
       validación) y documentado con referencia a esos archivos.
-- [ ] Si hay `VecNormalize`, estadísticos congelados en validación y prueba.
-- [ ] `training_curves_fold_{k}.png`: recompensa por episodio contra pasos, por semilla, con anotaciones de los cambios
+- [x] Si hay `VecNormalize`, estadísticos congelados en validación y prueba.
+- [x] `training_curves_fold_{k}.png`: recompensa por episodio contra pasos, por semilla, con anotaciones de los cambios
       relevantes (fin de la exploración, mesetas, caídas).
-- [ ] `run_metadata.json`: versiones de SB3, Gymnasium, torch y Python; semillas; configuración elegida por fold; pasos y tiempo.
-- [ ] Presupuesto de cómputo: `python main.py` completo en ≤ ~1.5 h en la Mac M2 (procesos en paralelo por fold);
+- [x] `run_metadata.json`: versiones de SB3, Gymnasium, torch y Python; semillas; configuración elegida por fold; pasos y tiempo.
+- [x] Presupuesto de cómputo: `python main.py` completo en ≤ ~1.5 h en la Mac M2 (procesos en paralelo por fold);
       tiempo real documentado en el README.
+
+**Estado (2026-11-27, GC):** hecho en `feat/gc-entrenamiento`. `code/train.py` (DQN con `SemiMarkovReplayBuffer`,
+rejilla, búsqueda en paralelo, criterio A y reuso de la búsqueda), `tests/test_train.py`, `notebooks/05_entrenamiento.ipynb`
+y 8 filas en `docs/decisiones.md`. La misma configuración gana en los 4 folds; en validación casi ningún candidato le gana
+a no operar. `python main.py` completo: ≈ 43 min (40.4 de entrenamiento con 10 procesos).
 
 ## Criterio de terminado
 

@@ -6,7 +6,11 @@ aquí solo se definen los parámetros globales (semilla, rutas y folds) y el ord
 """
 
 import json
+import os
+import platform
 import sys
+import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 if not str(getattr(sys.modules.get("code"), "__file__", "")).startswith(str(ROOT)):
     sys.modules.pop("code", None)
 
-from code import data, env, evaluate, plots  # noqa: E402
+from code import data, env, evaluate, plots, reward, train  # noqa: E402
 
 SEED = 42
 
@@ -27,6 +31,13 @@ ARTIFACTS = ROOT / "artifacts"
 FIGURES = ROOT / "docs" / "figuras"
 BTC_CSV = DATA / "Binance_BTCUSDT_1h.csv"
 SP500_CSV = DATA / "sp500_daily.csv"  # solo benchmark (§3.7)
+MODELS = ARTIFACTS / "models"  # no se versionan; se regeneran
+# Procesos para la búsqueda (uno por corrida, torch con 1 hilo); LAB04_PROCESSES lo cambia
+PROCESSES = int(os.environ.get("LAB04_PROCESSES", max(1, min(10, (os.cpu_count() or 2) - 1))))
+# LAB04_REUSE_MODELS=1 reusa la búsqueda ya entrenada en artifacts/models/ si se hizo con los mismos parámetros (para
+# iterar sin volver a entrenar ≈ 40 min); un clon limpio no tiene modelos y siempre entrena.
+REUSE_MODELS = os.environ.get("LAB04_REUSE_MODELS") == "1"
+SEARCH_CACHE = MODELS / "search.pkl"
 
 # Walk-forward de ventana expansiva (§3.6): fechas inclusivas, horas en UTC.
 FOLDS = {
@@ -95,8 +106,68 @@ def run_eda_stage(ohlcv, features):
           f"features con IM sobre el azar por fold: {[int((t.mi > t.mi_null_max_95).sum()) for t in analyses.values()]}")
 
 
-def run_training_stage():
-    """Parte 05: check_env, líneas base y entrenamiento por fold y semilla con búsqueda de hiperparámetros en validación."""
+def run_training_stage(ohlcv, features):
+    """Parte 05: check_env, líneas base y entrenamiento por fold y semilla con búsqueda de hiperparámetros en validación.
+
+    Escribe `artifacts/baselines.csv`, `artifacts/validation_results_fold_{k}.csv` (todas las configuraciones ×
+    semillas × puntos de control), `artifacts/training_curves_fold_{k}.png`, `artifacts/run_metadata.json` y los
+    modelos en `artifacts/models/`. Elige con el criterio (A) de `train.select_config`, solo con validación, y devuelve
+    {fold: política `obs -> acción`} del modelo elegido de cada fold, congelado para tocar la prueba una vez (parte 06).
+    """
+    from stable_baselines3.common.env_checker import check_env
+
+    start = time.perf_counter()
+    folds = {k: data.build_fold_dataset(ohlcv, features, k, dates) for k, dates in FOLDS.items()}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for fold_data in folds.values():
+            check_env(env.make_env(fold_data, "train", reward.REWARDS[reward.DEFAULT_REWARD]), warn=True)
+    baselines = pd.concat({k: train.run_baselines(fold_data, SEED + k) for k, fold_data in folds.items()}, names=["fold"])
+    baselines.to_csv(ARTIFACTS / "baselines.csv", float_format="%.6g")
+
+    jobs = [job for k, dates in FOLDS.items() for job in train.search_jobs(k, dates, BTC_CSV, MODELS)]
+    saved = train.load_search(SEARCH_CACHE, jobs) if REUSE_MODELS else None
+    if saved is None:
+        results, curves = train.hyperparameter_search(jobs, processes=PROCESSES)
+        train.save_search(SEARCH_CACHE, jobs, results, curves)
+    else:
+        results, curves = saved
+        print(f"[entrenamiento] LAB04_REUSE_MODELS=1: se reusan los {len(jobs)} modelos de {MODELS} (misma búsqueda)")
+    policies, chosen = {}, {}
+    for k in FOLDS:
+        fold_results = results[results["fold"] == k]
+        fold_results.to_csv(ARTIFACTS / f"validation_results_fold_{k}.csv", index=False, float_format="%.6g")
+        config_id, timesteps, seed = train.select_config(fold_results)
+        model = train.DQN.load(train.model_path(MODELS, k, config_id, seed, timesteps), device="cpu")
+        policies[k] = train.as_policy(model)
+        runs = fold_results[fold_results["config_id"] == config_id]
+        candidate = runs[runs["timesteps"] == timesteps]
+        chosen[k] = {"config_id": config_id, **train.GRID[config_id], "timesteps": timesteps, "seed": seed,
+                     "val_log_growth_median": float(candidate["val_log_growth"].median()),
+                     "val_log_growth_by_seed": dict(zip(candidate["seed"].astype(int), candidate["val_log_growth"]))}
+        plots.plot_training_curves({s: curves[(k, config_id, s)] for s in train.SEEDS}, runs, train.GRID[config_id],
+                                   timesteps, k, ARTIFACTS / f"training_curves_fold_{k}.png")
+
+    import gymnasium
+    import stable_baselines3
+    import torch
+
+    write_json({
+        "python": platform.python_version(), "stable_baselines3": stable_baselines3.__version__,
+        "gymnasium": gymnasium.__version__, "torch": torch.__version__, "platform": platform.platform(),
+        "global_seed": SEED, "seeds": list(train.SEEDS), "algorithm": "DQN + SemiMarkovReplayBuffer (γ^τ)",
+        "reward": reward.DEFAULT_REWARD, "total_timesteps": train.TOTAL_TIMESTEPS, "checkpoints": list(train.CHECKPOINTS),
+        "search_space": {k: [list(v) if isinstance(v, tuple) else v for v in vals]
+                         for k, vals in train.SEARCH_SPACE.items()},
+        "dqn_fixed": train.DQN_FIXED, "selection": "mediana entre semillas de val_log_growth; semilla mediana",
+        "chosen": chosen, "runs": len(jobs), "processes": PROCESSES, "reused_search": saved is not None,
+        "training_minutes": round((time.perf_counter() - start) / 60, 1),
+    }, ARTIFACTS / "run_metadata.json")
+    done = "reusadas" if saved is not None else f"en {(time.perf_counter() - start) / 60:.1f} min"
+    print(f"[entrenamiento] {len(jobs)} corridas {done}; elegidas: "
+          + "; ".join(f"fold {k} cfg {c['config_id']} {c['timesteps'] // 1000}k pasos "
+                      f"(val {c['val_log_growth_median']:+.3f})" for k, c in chosen.items()))
+    return policies
 
 
 def run_evaluation_stage(ohlcv, features, agent_policies=None):
@@ -152,8 +223,8 @@ def main():
     FIGURES.mkdir(parents=True, exist_ok=True)
     ohlcv, features = run_data_stage()
     run_eda_stage(ohlcv, features)
-    run_training_stage()
-    run_evaluation_stage(ohlcv, features)
+    agent_policies = run_training_stage(ohlcv, features)
+    run_evaluation_stage(ohlcv, features, agent_policies)
     run_sensitivity_stage()
     print(f"Pipeline terminado. Artefactos en {ARTIFACTS}")
 
