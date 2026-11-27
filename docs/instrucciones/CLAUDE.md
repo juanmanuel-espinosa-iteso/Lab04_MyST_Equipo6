@@ -126,7 +126,7 @@ intermedias. `{k}` = 1, 2, 3, 4. Los marcados con † son obligatorios por §3.8
 | `metrics_summary.csv` † | evaluate | todas las métricas de §3.7 por fold y agregadas (media y desviación estándar) para estrategia y benchmarks |
 | `trade_analysis.json` | evaluate | 3 peores operaciones de prueba, periodo del mayor drawdown, correlación con BTC (§3.9) |
 | `max_drawdown_fold_{k}.png` | evaluate (plots) | acciones del agente y precio en el periodo del mayor drawdown (§3.9.2) |
-| `sensitivity.csv` | sensitivity | resolución intrabarra (proporción afectada y cambio de resultado) y retraso de una barra en los datos (§3.3, §3.10, P6) |
+| `sensitivity.csv` | sensitivity | por fold, estrategia (agente, siempre largo, aleatorio) y escenario (base, `tp_first`, retraso de una barra, latencia de 2 s, +5/+10/+25 pb): métricas, operaciones ambiguas, proporción de operaciones repetidas y Δ contra la base, más media y desviación entre folds (§3.3, §3.10, P6) |
 | `ablation.csv` | sensitivity | desempeño quitando cada familia de variables (P7) |
 | `algorithm_comparison.csv` | sensitivity | algoritmo principal contra el segundo (P7) |
 | `agent_simulation.gif` | evaluate (plots) | **simulación visual** pedida por el profesor (clase del 2026-11-23): animación del agente operando un tramo de prueba (precio, entradas y salidas con su razón, posición, stop y take-profit, capital), al estilo del pingüino de FrozenLake de la S18–S19; se construye solo con la bitácora y la curva de capital, sin recalcular |

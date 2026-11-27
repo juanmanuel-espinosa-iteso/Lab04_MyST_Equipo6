@@ -41,10 +41,11 @@ REPETIR hasta cumplir el criterio de terminado:
       → `ablation.csv`.
 - [ ] **Segundo algoritmo (pregunta 7):** p. ej. PPO con la misma búsqueda en validación → `algorithm_comparison.csv`.
 
-**Estado (2026-11-27, JME):** maquinaria de los 4 escenarios de JME en la rama `feat/jme-sensibilidad`
-(`run_sensitivity`, `latency_cost`, `run_sensitivity_stage` → `sensitivity.csv`, `tests/test_sensitivity.py`), probada con
-las líneas base. Falta correrla con el agente de la 05 y escribir en el reporte las respuestas de capacidad/saturación y
-cambio de régimen (texto, con el análisis de la parte 02). Ablación y segundo algoritmo: GC.
+**Estado (2026-11-27, JME):** los 4 escenarios de JME corren con el agente congelado de la parte 05 y, como referencia,
+con siempre largo y aleatorio (`run_sensitivity`, `latency_cost`, `same_trades_share`, `run_sensitivity_stage` →
+`sensitivity.csv`, `tests/test_sensitivity.py`, notebook 07). Cifras en `docs/decisiones.md`. Falta escribir en el
+reporte las respuestas de capacidad/saturación y cambio de régimen (texto, con el análisis de la parte 02). Ablación y
+segundo algoritmo: GC.
 
 ## Criterio de terminado
 
