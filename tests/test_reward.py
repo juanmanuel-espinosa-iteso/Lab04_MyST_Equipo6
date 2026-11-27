@@ -76,6 +76,27 @@ def test_matches_env_on_reference_trade():
     assert contribution == pytest.approx(np.log(1.017475))
 
 
+
+def test_env_stop_exit_pays_exit_cost():
+    """Dentro del entorno, una salida por stop cobra el costo de entrada y el de salida: largo a 100, stop en 98."""
+    calm, decision = (100.0, 101.0, 99.0, 100.0), (100.0, 101.0, 99.0, 99.6)
+    bars = [decision, calm, (100.0, 100.8, 97.5, 98.5), calm, calm, calm]
+    index = pd.Timestamp("2024-01-01", tz="UTC") + pd.to_timedelta(range(len(bars)), unit="h")
+    ohlcv = pd.DataFrame(bars, columns=["open", "high", "low", "close"], index=index)
+    features = pd.DataFrame(np.zeros((len(bars), 1)), index=index)
+    trading_env = env.TradingEnv(ohlcv, features, np.full(len(bars), 0.01), reward.net_log_return,
+                                 mode="eval", horizon_hours=4)
+    trading_env.reset(seed=0)
+    _, contribution, _, _, info = trading_env.step(env.LONG)
+    assert (info["exit_reason"], info["exit_price"]) == ("stop", 98.0)
+    assert contribution == pytest.approx(np.log(1 - 0.02 - C * 1.98))
+
+
+def test_vol_scaled_rejects_nan_vol():
+    """Una volatilidad NaN no se cuela como NaN en la recompensa: es un error."""
+    with pytest.raises(ValueError):
+        reward.vol_scaled_return(outcome(1, 100.0, 102.0, vol=float("nan")))
+
 # ------------------------------------------------------------------ comparación con datos y pago por barra
 
 def test_per_bar_sums_to_terminal():
@@ -86,13 +107,18 @@ def test_per_bar_sums_to_terminal():
 
 
 @pytest.fixture(scope="module")
-def comparison():
-    """Comparación de contribuciones en el train del fold 1 (mismas operaciones para las tres)."""
+def fold_1():
+    """Datos del fold 1."""
     from main import BTC_CSV, FOLDS
 
     ohlcv, _ = data.load_ohlcv(BTC_CSV)
-    fold = data.build_fold_dataset(ohlcv, data.compute_features(ohlcv), 1, FOLDS[1])
-    return reward.reward_comparison(fold, "train", seed=42)
+    return data.build_fold_dataset(ohlcv, data.compute_features(ohlcv), 1, FOLDS[1])
+
+
+@pytest.fixture(scope="module")
+def comparison(fold_1):
+    """Comparación de contribuciones en el train del fold 1 (mismas operaciones para las tres)."""
+    return reward.reward_comparison(fold_1, "train", seed=42)
 
 
 def test_random_agent_loses_with_costs(comparison):
@@ -103,8 +129,16 @@ def test_random_agent_loses_with_costs(comparison):
     assert gross["mean_per_trade"] > net["mean_per_trade"] + 0.002
 
 
-def test_comparison_uses_same_trades(comparison):
-    """Las tres contribuciones se calculan sobre las mismas operaciones de cada política."""
-    assert set(comparison.index.get_level_values("policy")) == {"aleatorio", "siempre_largo", "siempre_corto"}
-    assert (comparison.groupby(level="policy")["trades"].nunique() == 1).all()
-    assert (comparison.groupby(level="policy")["decisions"].nunique() == 1).all()
+def test_comparison_matches_env_with_the_real_reward(comparison, fold_1):
+    """Las operaciones grabadas son las del entorno: con la contribución principal dentro del entorno, siempre largo
+    acumula el mismo total y el mismo número de operaciones que la comparación, y el total es ln(capital final)."""
+    trading_env = env.make_env(fold_1, "train", reward.net_log_return, mode="eval")
+    trading_env.reset(seed=42)
+    total, done = 0.0, False
+    while not done:
+        _, r, terminated, truncated, _ = trading_env.step(env.LONG)
+        total, done = total + r, terminated or truncated
+    row = comparison.loc[("siempre_largo", "net_log_return")]
+    assert row["total"] == pytest.approx(total, abs=1e-9)
+    assert row["trades"] == len(trading_env.trade_log())
+    assert total == pytest.approx(np.log(trading_env.equity), abs=1e-9)
