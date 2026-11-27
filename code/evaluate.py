@@ -300,14 +300,18 @@ def buy_and_hold(prices, start, end, cost, entry=None):
 
 
 def daily_equity(equity, start, end):
-    """Capital al final de cada día calendario de [start, end] (último valor conocido; antes del inicio, el inicial).
+    """Capital al cierre de cada día calendario, del **día 0** (start − 1 día) a `end`.
 
-    Pone a la estrategia, BTC y el S&P 500 en el mismo calendario de 365 días: un día sin datos repite el último capital,
-    así que su rendimiento es 0.
+    El día 0 vale el capital inicial: así el rendimiento del primer día de prueba entra a las métricas, total_return es
+    E_fin / E_inicial − 1 y la anualización usa los días completos del periodo (revisión de GC, PR #5). Después, cada día
+    toma el último valor conocido; un día sin datos repite el último capital (rendimiento 0). Pone a la estrategia, BTC y
+    el S&P 500 en el mismo calendario de 365 días.
     """
-    days = pd.date_range(pd.Timestamp(start, tz="UTC"), pd.Timestamp(end, tz="UTC"), freq="D")
+    days = pd.date_range(pd.Timestamp(start, tz="UTC") - pd.Timedelta(days=1), pd.Timestamp(end, tz="UTC"), freq="D")
     eod = equity.groupby(equity.index.floor("D")).last()
-    return eod.reindex(days).ffill().fillna(INITIAL_EQUITY)
+    daily = eod.reindex(days).ffill().fillna(INITIAL_EQUITY)
+    daily.iloc[0] = INITIAL_EQUITY
+    return daily
 
 
 def performance_metrics(equity_daily, trades):

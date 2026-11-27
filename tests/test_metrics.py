@@ -47,11 +47,40 @@ def test_buy_and_hold_pays_costs_on_both_sides():
 
 
 def test_daily_equity_fills_days_without_data():
-    """Un día sin datos repite el último capital; antes del primer dato el capital es el inicial."""
+    """El calendario empieza en el día 0 (start − 1) con el capital inicial; un día sin datos repite el último capital."""
     hourly = pd.Series([1.0, 1.2, 1.3], index=pd.to_datetime(["2024-01-02 05:00", "2024-01-02 23:00",
                                                                "2024-01-04 10:00"], utc=True))
     out = evaluate.daily_equity(hourly, "2024-01-01", "2024-01-05")
-    assert out.to_list() == [1.0, 1.2, 1.2, 1.3, 1.3]
+    assert str(out.index[0].date()) == "2023-12-31"
+    assert out.to_list() == [1.0, 1.0, 1.2, 1.2, 1.3, 1.3]
+
+
+def test_first_test_day_counts():
+    """Revisión de GC (PR #5): una curva que se mueve desde el primer día. El rendimiento del día 1 entra a las métricas:
+    total_return = capital final / capital inicial − 1 y el primer rendimiento diario es el del día 1."""
+    hourly = pd.Series([1.0, 1.05, 1.10, 1.21], index=pd.to_datetime(
+        ["2024-01-01 00:00", "2024-01-01 23:00", "2024-01-02 23:00", "2024-01-03 23:00"], utc=True))
+    daily = evaluate.daily_equity(hourly, "2024-01-01", "2024-01-03")
+    m = evaluate.performance_metrics(daily, trades([0.21]))
+    assert m["total_return"] == pytest.approx(hourly.iloc[-1] / evaluate.INITIAL_EQUITY - 1)
+    assert daily.pct_change().iloc[1] == pytest.approx(0.05)
+    assert m["annual_return"] == pytest.approx(1.21 ** (365 / 3) - 1)  # 3 días completos de prueba
+
+
+def test_btc_buy_and_hold_total_return_matches_equity():
+    """En la prueba real del fold 1 (2023), el rendimiento total de comprar y mantener BTC es su capital final − 1
+    (antes de la corrección salía +154.3 % contra +155.2 % real)."""
+    from code import data, env
+    from main import BTC_CSV, FOLDS
+
+    ohlcv, _ = data.load_ohlcv(BTC_CSV)
+    start, end = FOLDS[1]["test"]
+    btc = ohlcv.loc[start:end]
+    equity, log = evaluate.buy_and_hold(btc["close"], btc.index[0], btc.index[-1], env.COST_PER_SIDE,
+                                        entry=btc["open"].iloc[0])
+    m = evaluate.performance_metrics(evaluate.daily_equity(equity, start, end), log)
+    assert m["total_return"] == pytest.approx(equity.iloc[-1] - 1, abs=1e-12)
+    assert round(m["total_return"], 3) == 1.552
 
 
 def test_alpha_and_aggregation():
