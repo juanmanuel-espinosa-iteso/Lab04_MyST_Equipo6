@@ -103,3 +103,37 @@ def test_training_is_reproducible_with_the_seed(fold_1):
     assert scores[0] == scores[1]
     curve = runs[0][1]
     assert len(curve) > 0 and {"timesteps", "episode_reward"} <= set(curve.columns)
+
+
+# ---------------------------------------------------------------------- búsqueda y selección
+
+def results_table(val_by_config):
+    """Tabla de resultados a mano: {config_id: [puntaje de validación por semilla]}."""
+    return pd.DataFrame([{"config_id": c, "seed": s, "val_log_growth": v}
+                         for c, values in val_by_config.items() for s, v in enumerate(values)])
+
+
+def test_select_config_uses_the_median_across_seeds():
+    """Gana la mediana entre semillas, no la mejor semilla: la configuración 1 tiene una semilla suertuda."""
+    results = results_table({0: [0.05, 0.06, 0.04], 1: [0.50, -0.30, -0.20]})
+    config_id, seed = train.select_config(results)
+    assert (config_id, seed) == (0, 0)  # mediana 0.05 > −0.20; la semilla mediana de la configuración 0 es la 0
+
+
+def test_select_config_breaks_ties_with_the_lower_id():
+    """Empate en la mediana → la configuración de menor índice (regla fija, no la que se vea mejor después)."""
+    results = results_table({2: [0.0, 0.0, 0.0], 5: [0.0, 0.0, 0.0]})
+    assert train.select_config(results)[0] == 2
+
+
+def test_search_touches_only_train_and_validation(fold_1, tmp_path):
+    """Una búsqueda chica: una fila por (configuración, semilla) con métricas de train y validación, nunca de prueba,
+    y el modelo guardado de cada corrida."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0, 1], total_timesteps=1_000)
+    results, curves = train.hyperparameter_search(jobs, processes=1)
+    assert len(results) == 2 and set(curves) == {(0, 0), (0, 1)}
+    assert not [c for c in results.columns if "test" in c]
+    assert {"val_log_growth", "val_sharpe", "train_log_growth"} <= set(results.columns)
+    assert all((tmp_path / "fold_1" / f"cfg00_seed{s}.zip").exists() for s in (0, 1))

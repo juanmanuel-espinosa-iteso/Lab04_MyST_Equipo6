@@ -13,6 +13,9 @@ selección `SELECTION_METRIC` (mediana entre semillas del crecimiento log en val
 """
 
 import itertools
+import multiprocessing
+import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,7 +25,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
-from code import env, reward
+from code import data, env, reward
 
 
 class SemiMarkovReplayBuffer(ReplayBuffer):
@@ -149,3 +152,70 @@ def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward
 def as_policy(model):
     """Política determinista `obs -> acción` de un modelo de SB3 (la que se evalúa en validación y prueba)."""
     return lambda obs: int(model.predict(obs, deterministic=True)[0])
+
+
+# ---------------------------------------------------------------------- búsqueda en validación y selección
+
+_CACHE = {}  # por proceso: datos y folds ya construidos
+
+
+def _fold_data(csv_path, fold, dates):
+    """`FoldData` del fold, construido una vez por proceso (el normalizador se ajusta solo con su train)."""
+    if "base" not in _CACHE:
+        ohlcv, _ = data.load_ohlcv(csv_path)
+        _CACHE["base"] = (ohlcv, data.compute_features(ohlcv))
+    if fold not in _CACHE:
+        _CACHE[fold] = data.build_fold_dataset(*_CACHE["base"], fold, dates)
+    return _CACHE[fold]
+
+
+def model_path(models_dir, fold, config_id, seed):
+    """Ruta del modelo de una corrida: `models_dir/fold_{k}/cfg{id}_seed{s}.zip`."""
+    return Path(models_dir) / f"fold_{fold}" / f"cfg{config_id:02d}_seed{seed}.zip"
+
+
+def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS, total_timesteps=TOTAL_TIMESTEPS):
+    """Corridas (configuración × semilla) de la búsqueda de un fold."""
+    config_ids = range(len(GRID)) if config_ids is None else config_ids
+    return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(models_dir), config_id=c, seed=s,
+                 total_timesteps=total_timesteps) for c in config_ids for s in seeds]
+
+
+def run_job(job):
+    """Entrena una corrida, guarda el modelo y la puntúa en train y validación (nunca en prueba)."""
+    start = time.perf_counter()
+    fold_data = _fold_data(job["csv_path"], job["fold"], job["dates"])
+    config = GRID[job["config_id"]]
+    model, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"])
+    path = model_path(job["models_dir"], job["fold"], job["config_id"], job["seed"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(path)
+    policy = as_policy(model)
+    row = {"fold": job["fold"], "config_id": job["config_id"], "seed": job["seed"],
+           **{k: str(v) if k == "net_arch" else v for k, v in config.items()}}
+    for split, prefix in (("train", "train"), ("validation", "val")):
+        row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
+    row["minutes"] = (time.perf_counter() - start) / 60
+    return row, curve
+
+
+def hyperparameter_search(jobs, processes=1):
+    """Corre las corridas (en paralelo si `processes` > 1). Devuelve (resultados, {(config_id, seed): curva})."""
+    if processes > 1:
+        with multiprocessing.get_context("spawn").Pool(processes) as pool:
+            outputs = pool.map(run_job, jobs, chunksize=1)
+    else:
+        outputs = [run_job(job) for job in jobs]
+    results = pd.DataFrame([row for row, _ in outputs]).sort_values(["fold", "config_id", "seed"], ignore_index=True)
+    curves = {(row["config_id"], row["seed"]): curve for row, curve in outputs}
+    return results, curves
+
+
+def select_config(results, metric=SELECTION_METRIC):
+    """Criterio (A), fijado antes de ver resultados: la configuración con mayor **mediana entre semillas** de
+    `val_{metric}` (empates → menor índice) y, de ella, la semilla mediana (no la mejor). Devuelve (config_id, seed)."""
+    column = f"val_{metric}"
+    medians = results.groupby("config_id")[column].median()
+    config_id = int(medians[medians == medians.max()].index.min())
+    runs = results[results["config_id"] == config_id].sort_values([column, "seed"])
+    return config_id, int(runs["seed"].iloc[(len(runs) - 1) // 2])
