@@ -139,7 +139,7 @@ def test_search_touches_only_train_and_validation(fold_1, tmp_path):
     jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0, 1], total_timesteps=1_000,
                              checkpoints=(500, 1_000))
     results, curves = train.hyperparameter_search(jobs, processes=1)
-    assert len(results) == 4 and set(curves) == {(0, 0), (0, 1)}
+    assert len(results) == 4 and set(curves) == {(1, 0, 0), (1, 0, 1)}
     assert sorted(results["timesteps"].unique()) == [500, 1_000]
     assert not [c for c in results.columns if "test" in c]
     assert {"val_log_growth", "val_sharpe", "train_log_growth"} <= set(results.columns)

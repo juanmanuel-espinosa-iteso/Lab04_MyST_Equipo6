@@ -229,7 +229,7 @@ def run_job(job):
 
 
 def hyperparameter_search(jobs, processes=1):
-    """Corre las corridas (en paralelo si `processes` > 1). Devuelve (resultados, {(config_id, seed): curva})."""
+    """Corre las corridas (en paralelo si `processes` > 1). Devuelve (resultados, {(fold, config_id, seed): curva})."""
     if processes > 1:
         with multiprocessing.get_context("spawn").Pool(processes) as pool:
             outputs = pool.map(run_job, jobs, chunksize=1)
@@ -237,7 +237,7 @@ def hyperparameter_search(jobs, processes=1):
         outputs = [run_job(job) for job in jobs]
     results = pd.DataFrame([row for rows, _ in outputs for row in rows])
     results = results.sort_values(["fold", "config_id", "timesteps", "seed"], ignore_index=True)
-    curves = {(job["config_id"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
+    curves = {(job["fold"], job["config_id"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
     return results, curves
 
 
