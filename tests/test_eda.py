@@ -3,6 +3,8 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import stats
+from sklearn.feature_selection import mutual_info_regression
 
 from code import data, evaluate
 from main import BTC_CSV, FOLDS, SEED
@@ -130,3 +132,21 @@ def test_mutual_information_finds_a_planted_signal():
     assert table.loc["ruido", "mi"] < 0.1 * table.loc["senal", "mi"]
     again = evaluate.mutual_information(x, pd.Series(signal), SEED, n_permutations=5)
     pd.testing.assert_frame_equal(again, evaluate.mutual_information(x, pd.Series(signal), SEED, n_permutations=5))
+
+
+def test_offset_robustness_counts_by_hand(market):
+    """En cuántos de los 25 desfases sale significativa cada feature: igual a contar a mano con Spearman y con la IM
+    contra el umbral de azar común del fold."""
+    ohlcv, features = market
+    train_ohlcv, train_features = evaluate.train_frames(ohlcv, features, FOLDS[1])
+    table = evaluate.offset_robustness(train_ohlcv, train_features, SEED, n_permutations=25)
+    assert (table["n_offsets"] == evaluate.SAMPLE_STEP).all()
+    assert table.index.tolist() == list(train_features.columns)
+    by_hand = {"spearman_sig": 0, "spearman_abs_sig": 0, "mi_above_null": 0}
+    for offset in range(evaluate.SAMPLE_STEP):
+        x, y = evaluate.feature_target_sample(train_ohlcv, train_features, offset=offset)
+        by_hand["spearman_sig"] += stats.spearmanr(x["ret_24h"], y).pvalue < 0.05
+        by_hand["spearman_abs_sig"] += stats.spearmanr(x["ret_24h"], y.abs()).pvalue < 0.05
+        mi = mutual_info_regression(x, y.to_numpy(), random_state=SEED)[list(x.columns).index("ret_24h")]
+        by_hand["mi_above_null"] += mi > table.loc["ret_24h", "mi_null_max_95"]
+    assert table.loc["ret_24h", list(by_hand)].to_dict() == by_hand
