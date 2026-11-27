@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from code import env, reward
+from code import data, env, reward
 
 C = env.COST_PER_SIDE
 
@@ -74,3 +74,37 @@ def test_matches_env_on_reference_trade():
     assert info["exit_reason"] == "take_profit"
     assert contribution == pytest.approx(np.log(info["equity"]))
     assert contribution == pytest.approx(np.log(1.017475))
+
+
+# ------------------------------------------------------------------ comparación con datos y pago por barra
+
+def test_per_bar_sums_to_terminal():
+    """Pagar por barra reparte el mismo log neto: suma igual a la terminal, con el costo de entrada en la primera barra."""
+    parts = reward.per_bar_contributions(100.0, [101.0, 99.0, 103.0], 102.0, side=1)
+    assert parts.sum() == pytest.approx(np.log(1.017475))
+    assert parts[0] < np.log(101.0 / 100.0)
+
+
+@pytest.fixture(scope="module")
+def comparison():
+    """Comparación de contribuciones en el train del fold 1 (mismas operaciones para las tres)."""
+    from main import BTC_CSV, FOLDS
+
+    ohlcv, _ = data.load_ohlcv(BTC_CSV)
+    fold = data.build_fold_dataset(ohlcv, data.compute_features(ohlcv), 1, FOLDS[1])
+    return reward.reward_comparison(fold, "train", seed=42)
+
+
+def test_random_agent_loses_with_costs(comparison):
+    """Criterio de terminado: el aleatorio tiene contribución media negativa con costos; sin costos, mucho mejor."""
+    net = comparison.loc[("aleatorio", "net_log_return")]
+    gross = comparison.loc[("aleatorio", "gross_log_return")]
+    assert net["mean_per_decision"] < 0
+    assert gross["mean_per_trade"] > net["mean_per_trade"] + 0.002
+
+
+def test_comparison_uses_same_trades(comparison):
+    """Las tres contribuciones se calculan sobre las mismas operaciones de cada política."""
+    assert set(comparison.index.get_level_values("policy")) == {"aleatorio", "siempre_largo", "siempre_corto"}
+    assert (comparison.groupby(level="policy")["trades"].nunique() == 1).all()
+    assert (comparison.groupby(level="policy")["decisions"].nunique() == 1).all()
