@@ -145,9 +145,82 @@ falta la siguiente).
 
 ## 6. Contribución, objetivo y política (GC)
 
-*(Sección a cargo de GC.)* La contribución es la de `code/reward.py` (`REWARDS[DEFAULT_REWARD]`): el rendimiento log neto
-de la operación, pagado al cierre (terminal), con 0.125 % por lado; esperar vale 0. Falta el objetivo con el descuento
-γ^{τ_n}, la clase de política de Powell (VFA con DQN) y cómo se busca (parte 05).
+### Contribución C(S_{t_n}, x_{t_n}, W_{t_n+1}) (elemento 5)
+
+Se paga **una vez por decisión, al cierre** (terminal), y es el rendimiento log neto de la operación con todo el capital
+y c = 0.00125 por lado sobre el nocional de entrada y el de salida (`reward.net_log_return`,
+`REWARDS[DEFAULT_REWARD]`):
+
+- operar (s = ±1): C = ln(E_{t_{n+1}} / E_{t_n}) = ln(1 + s · (P^sal − P^ent)/P^ent − c · (P^ent + P^sal)/P^ent);
+- esperar (s = 0): C = 0.
+
+P^sal depende de W_{t_n+1} (la trayectoria hasta la salida), así que C se conoce hasta t_{n+1}: el entorno la arma con el
+`TradeOutcome` de la transición y la devuelve en el `step` que la cierra. El costo de salida se cobra también al cerrar
+por stop o take-profit (`test_env_stop_exit_pays_exit_cost`).
+
+- **Por qué esta:** como todo el capital entra en cada operación, Σ_n C_n = ln(E_final / E_inicial). Maximizar la suma de
+  contribuciones es maximizar el crecimiento log del capital neto de costos, que es lo que se evalúa, sin coeficientes
+  de moldeo. Queda en el orden de 10⁻² por operación de 24 h.
+- **Por qué terminal y no por barra:** el agente no actúa en posición, así que las recompensas de las barras intermedias
+  no dependen de nada que pueda cambiar. Pagada por barra, la operación suma lo mismo (`reward.per_bar_contributions`),
+  pero la relación media/desviación baja de −0.063 por operación a −0.015 por barra (siempre largo, train del fold 1).
+- **Por qué esperar vale 0:** el descuento γ^τ ya cobra el tiempo plano. Un costo de oportunidad o una penalización
+  serían coeficientes de moldeo más (§3.4).
+- **Alternativas en el registro** (comparadas sobre las mismas operaciones en `notebooks/04_contribucion.ipynb`):
+  - `vol_scaled_return`: C / (σ̂ · √H); su suma deja de ser el capital;
+  - `gross_log_return`: sin costos; operar al azar casi no pierde y premia rotar.
+
+### Objetivo
+
+Criterio de agregación: **recompensa acumulada descontada por la duración real**. Con t_n en horas de reloj,
+
+max_π 𝔼 [ Σ_{n ≥ 0} γ^{t_n − t_0} · C(S_{t_n}, X^π(S_{t_n}), W_{t_n+1}) | S_{t_0} ],   γ por hora,  t_{n+1} − t_n = τ_n.
+
+- El descuento acumulado entre dos épocas es γ^{τ_n}, no γ. Una hora de espera descuenta γ; una operación de 24 h,
+  γ^{24}. Descontar γ por decisión haría a una operación larga tan barata en tiempo como una espera de 1 h.
+- La esperanza es sobre W (las trayectorias de precio) y sobre el estado inicial: el inicio aleatorio del episodio de
+  720 barras en el train. γ < 1 es un parámetro de la solución (estabiliza el bootstrap), no del problema. Con
+  γ → 1 el objetivo es 𝔼[ln E_final].
+- La métrica de la evaluación es el crecimiento del capital y el Sharpe neto de costos en prueba contra comprar y
+  mantener BTC y el S&P 500 (parte 06, `evaluate.performance_metrics`). La contribución está alineada con ella.
+
+La ecuación de Bellman semi-Markov que el agente aproxima es
+
+Q(S, x) = 𝔼 [ C(S, x, W) + γ^{τ} · max_{x'} Q(S', x') ],   S' = S^M(S, x, W),
+
+sin término de bootstrap si la transición termina en ruina (`terminated`). Al truncar por fin de ventana (`truncated`) sí
+se hace bootstrap, porque el mercado sigue.
+
+### Política X^π: clase de Powell y cómo se busca
+
+**Clase: VFA para la entrada, con una PFA fija para la salida (híbrido).**
+
+- **Entrada (VFA):** X^π(S_{t_n}) = argmax_{x ∈ {0, 1, 2}} Q̄(S_{t_n}, x | θ). Q̄ es una red neuronal (DQN) que
+  aproxima C + γ^τ · V̄(S_{t_{n+1}}), la contribución de la decisión más el valor del estado al que lleva.
+  - La observación de 25 variables (sección 2) es la entrada de la red.
+  - La política es determinista en la evaluación (`model.predict(obs, deterministic=True)`) y ε-greedy en el
+    entrenamiento.
+- **Salida (PFA):** el gestor de posiciones es una regla analítica con θ^{gestor} = (H, k_stop, k_take) = (24 h, 1, 1)
+  (`env.barrier_levels`, `env.resolve_exit`). No hay optimización embebida: cierra por la primera barrera o por el
+  horizonte. Por eso la política completa es un híbrido VFA + PFA.
+
+**Cómo se busca (parte 05, `code/train.py`).**
+
+1. **θ de la red:** DQN de Stable-Baselines3. Es Q-learning con red, off-policy, con replay buffer y red objetivo. El
+   buffer es semi-Markov: guarda (S_{t_n}, x, C, S_{t_{n+1}}, τ_n) con τ_n de `info["duration"]`, y el objetivo usa
+   γ^{τ_n}.
+2. **Hiperparámetros:** rejilla chica, solo en **validación**, con al menos 3 semillas por configuración. Se busca en
+   tasa de aprendizaje, γ, tamaño de red y exploración, y opcionalmente H y k. Todas las combinaciones
+   configuración × semilla quedan en `artifacts/validation_results_fold_{k}.csv`.
+3. **Selección:** el criterio se fija antes de ver los resultados: la mediana entre semillas del Sharpe neto en
+   validación. Se reporta la dispersión entre semillas, no la mejor semilla.
+4. **Un modelo por fold:** se entrena con la configuración elegida, se congela y toca la prueba **una sola vez** (parte 06).
+
+**Qué no es.**
+
+- No es PFA pura, porque la entrada sale de un argmax sobre un valor estimado y no de una regla.
+- No es DLA, porque no se simulan escenarios futuros al decidir.
+- No es CFA, porque no hay un problema determinista con parámetros ajustados.
 
 ## 7. Ejemplo numérico de una transición completa
 
