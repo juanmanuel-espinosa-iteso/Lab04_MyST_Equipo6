@@ -30,6 +30,7 @@ DATA = ROOT / "data"
 ARTIFACTS = ROOT / "artifacts"
 FIGURES = ROOT / "docs" / "figuras"
 BTC_CSV = DATA / "Binance_BTCUSDT_1h.csv"
+SP500_CSV = DATA / "sp500_daily.csv"  # solo benchmark (§3.7)
 MODELS = ARTIFACTS / "models"  # no se versionan; se regeneran
 # Procesos para la búsqueda (uno por corrida, torch con 1 hilo); LAB04_PROCESSES lo cambia
 PROCESSES = int(os.environ.get("LAB04_PROCESSES", max(1, min(10, (os.cpu_count() or 2) - 1))))
@@ -43,9 +44,20 @@ FOLDS = {
 }
 
 
+def _json_safe(obj):
+    """Copia de `obj` apta para JSON estricto: NaN e infinitos pasan a `null` (JSON no tiene NaN)."""
+    if isinstance(obj, dict):
+        return {key: _json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(value) for value in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
+
+
 def write_json(obj, path):
-    """Escribe `obj` como JSON legible (UTF-8, sangría de 2)."""
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    """Escribe `obj` como JSON válido y legible (UTF-8, sangría de 2); NaN e infinitos se escriben como `null`."""
+    path.write_text(json.dumps(_json_safe(obj), indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
 
 
 def run_data_stage():
@@ -147,8 +159,46 @@ def run_training_stage(ohlcv, features):
     return policies
 
 
-def run_evaluation_stage():
-    """Parte 06: evaluación única en prueba, bitácora, benchmarks y métricas agregadas entre folds."""
+def run_evaluation_stage(ohlcv, features, agent_policies=None):
+    """Parte 06: evaluación única en prueba, bitácora, benchmarks y métricas agregadas entre folds.
+
+    `agent_policies` (fold -> `obs -> acción`) viene de la parte 05 con los hiperparámetros ya congelados. En cada prueba
+    se evalúan además las líneas base y los dos benchmarks con el mismo costo. Escribe `metrics_summary.csv` y
+    `equity_curves_test_fold_{k}.png`; con agente, también `trade_log_fold_{k}.csv`, `max_drawdown_fold_{k}.png` y
+    `trade_analysis.json` (§3.9).
+    """
+    agent_policies = agent_policies or {}
+    sp500 = data.load_sp500(SP500_CSV)
+    results, raw_test, btc_daily = {}, {}, {}
+    for k, dates in FOLDS.items():
+        fold = data.build_fold_dataset(ohlcv, features, k, dates)
+        policies = evaluate.baseline_policies(n_actions=3, seed=SEED + k)
+        if k in agent_policies:
+            policies = {evaluate.AGENT: agent_policies[k], **policies}
+        results[k] = evaluate.evaluate_test_fold(fold, policies, sp500, dates["test"], SEED + k, env.COST_PER_SIDE)
+        raw_test[k], btc_daily[k] = fold.raw_features["test"], results[k]["btc_buy_hold"]["daily"]
+        shown = [evaluate.AGENT, "siempre_largo", "aleatorio", *evaluate.BENCHMARKS]
+        plots.plot_equity_curves({n: results[k][n]["daily"] for n in shown if n in results[k]}, k, dates["test"],
+                                 ARTIFACTS / f"equity_curves_test_fold_{k}.png")
+        if evaluate.AGENT in results[k]:
+            log = results[k][evaluate.AGENT]["trades"]
+            state = raw_test[k].reindex(log["decision_time"]).reset_index(drop=True).add_prefix("state_")
+            pd.concat([log, state], axis=1).to_csv(ARTIFACTS / f"trade_log_fold_{k}.csv", index=False)
+
+    table = evaluate.metrics_table(results)
+    table.to_csv(ARTIFACTS / "metrics_summary.csv", float_format="%.6g")
+    if agent_policies:
+        analysis = evaluate.trade_analysis(results, raw_test, btc_daily)
+        for k, window in analysis["drawdowns"].items():
+            agent = results[k][evaluate.AGENT]
+            plots.plot_drawdown_period(ohlcv, agent["trades"], agent["equity"], window, k,
+                                       ARTIFACTS / f"max_drawdown_fold_{k}.png")
+        write_json(json.loads(json.dumps({**analysis, "worst_trades": analysis["worst_trades"].to_dict("records")},
+                                         default=str)), ARTIFACTS / "trade_analysis.json")
+    agg = table.loc["media"]
+    print(f"[evaluación] Sharpe medio en prueba: " + "; ".join(f"{n} {agg.loc[n, 'sharpe']:.2f}" for n in agg.index)
+          + ("" if agent_policies else " (sin agente: falta la parte 05)"))
+    return results
 
 
 def run_sensitivity_stage():
@@ -162,8 +212,8 @@ def main():
     FIGURES.mkdir(parents=True, exist_ok=True)
     ohlcv, features = run_data_stage()
     run_eda_stage(ohlcv, features)
-    agent_policies = run_training_stage(ohlcv, features)  # noqa: F841 (la parte 06 las recibe al fusionar el #5)
-    run_evaluation_stage()
+    agent_policies = run_training_stage(ohlcv, features)
+    run_evaluation_stage(ohlcv, features, agent_policies)
     run_sensitivity_stage()
     print(f"Pipeline terminado. Artefactos en {ARTIFACTS}")
 

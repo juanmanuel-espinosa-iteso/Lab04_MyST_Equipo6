@@ -15,7 +15,7 @@ sintéticos o un tramo corto del CSV), sin entrenar modelos.
       vector que el cálculo sobre la serie completa (varios i, incluido el normalizador del fold).
 - [x] **3. `test_reference_trade.py`** (JME): trayectoria corta calculada a mano con razón de salida, duración y P&L
       conocidos, reproducida exactamente; un caso por razón de salida y el empate intrabarra.
-- [ ] **4. `test_accounting.py`** (JME): capital final = capital inicial + Σ P&L neto de la bitácora.
+- [x] **4. `test_accounting.py`** (JME): capital final = capital inicial + Σ P&L neto de la bitácora.
 - [ ] `test_reward.py` (GC): contribución de una operación conocida = cálculo a mano.
 - [ ] Pruebas extra útiles (GC): folds sin traslape y en orden; normalizador ajustado solo con train; métricas contra valores a mano.
 - [ ] `pytest` en verde desde un clon limpio.

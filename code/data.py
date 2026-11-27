@@ -340,3 +340,27 @@ def describe_folds(ohlcv, features, folds):
             for name, part in parts.items()
         }
     return out
+
+
+SP500_TICKER = "^GSPC"
+
+
+def load_sp500(path, start="2017-08-01", end="2026-04-30"):
+    """Cierre diario del S&P 500 (`^GSPC`) **solo para el benchmark** de §3.7; nunca entra al estado del agente.
+
+    Lee el snapshot versionado `path` (columnas `date, close`); solo si falta lo descarga con yfinance y lo guarda, para
+    que `main.py` no dependa de Yahoo el día de la evaluación. Devuelve una Serie con índice diario en UTC.
+    """
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.exists():
+        import yfinance as yf
+
+        raw = yf.download(SP500_TICKER, start=start, end=end, auto_adjust=False, progress=False)
+        close = raw["Close"].squeeze().rename("close")
+        close.index = pd.DatetimeIndex(close.index).tz_localize(None).rename("date")
+        close.to_frame().to_csv(path, float_format="%.4f")
+    sp = pd.read_csv(path, index_col="date", parse_dates=True)["close"]
+    sp.index = sp.index.tz_localize("UTC")
+    return sp
