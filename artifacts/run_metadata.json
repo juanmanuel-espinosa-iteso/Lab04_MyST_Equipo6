@@ -1,0 +1,136 @@
+{
+  "python": "3.12.2",
+  "stable_baselines3": "2.9.2",
+  "gymnasium": "1.4.0",
+  "torch": "2.15.0",
+  "platform": "macOS-27.2.1-arm64-arm-64bit",
+  "global_seed": 42,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "algorithm": "DQN + SemiMarkovReplayBuffer (γ^τ)",
+  "reward": "net_log_return",
+  "total_timesteps": 300000,
+  "checkpoints": [
+    50000,
+    100000,
+    150000,
+    200000,
+    250000,
+    300000
+  ],
+  "search_space": {
+    "learning_rate": [
+      0.0001,
+      0.0005
+    ],
+    "gamma": [
+      0.99,
+      0.995
+    ],
+    "net_arch": [
+      [
+        64,
+        64
+      ],
+      [
+        128,
+        128
+      ]
+    ],
+    "exploration_fraction": [
+      0.1,
+      0.3
+    ]
+  },
+  "dqn_fixed": {
+    "buffer_size": 100000,
+    "learning_starts": 5000,
+    "batch_size": 64,
+    "train_freq": 4,
+    "gradient_steps": 1,
+    "target_update_interval": 2000,
+    "exploration_final_eps": 0.05
+  },
+  "selection": "mediana entre semillas de val_log_growth; semilla mediana",
+  "chosen": {
+    "1": {
+      "config_id": 8,
+      "learning_rate": 0.0005,
+      "gamma": 0.99,
+      "net_arch": [
+        64,
+        64
+      ],
+      "exploration_fraction": 0.1,
+      "timesteps": 300000,
+      "seed": 0,
+      "val_log_growth_median": 0.22490213877721038,
+      "val_log_growth_by_seed": {
+        "0": 0.22490213877721038,
+        "1": 0.6093408876068968,
+        "2": -0.25503492473312167
+      }
+    },
+    "2": {
+      "config_id": 8,
+      "learning_rate": 0.0005,
+      "gamma": 0.99,
+      "net_arch": [
+        64,
+        64
+      ],
+      "exploration_fraction": 0.1,
+      "timesteps": 300000,
+      "seed": 1,
+      "val_log_growth_median": -0.2531536994333049,
+      "val_log_growth_by_seed": {
+        "0": -0.12522751054889578,
+        "1": -0.2531536994333049,
+        "2": -0.48515505687627986
+      }
+    },
+    "3": {
+      "config_id": 8,
+      "learning_rate": 0.0005,
+      "gamma": 0.99,
+      "net_arch": [
+        64,
+        64
+      ],
+      "exploration_fraction": 0.1,
+      "timesteps": 250000,
+      "seed": 1,
+      "val_log_growth_median": 0.004709571956625303,
+      "val_log_growth_by_seed": {
+        "0": 0.03671753052404618,
+        "1": 0.004709571956625303,
+        "2": -0.9975252781756467
+      }
+    },
+    "4": {
+      "config_id": 8,
+      "learning_rate": 0.0005,
+      "gamma": 0.99,
+      "net_arch": [
+        64,
+        64
+      ],
+      "exploration_fraction": 0.1,
+      "timesteps": 300000,
+      "seed": 1,
+      "val_log_growth_median": -0.06299211676040034,
+      "val_log_growth_by_seed": {
+        "0": 0.052845296366133956,
+        "1": -0.06299211676040034,
+        "2": -0.5676053694703501
+      }
+    }
+  },
+  "runs": 192,
+  "processes": 10,
+  "reused_search": false,
+  "training_minutes": 40.4
+}
