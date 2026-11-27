@@ -73,9 +73,11 @@ valor, actualízala. Los marcados *por decidir* se fijan en su parte y se regist
 | Features y familias | 22 features en 6 familias (`FEATURE_FAMILIES`): rendimientos `RETURN_LAGS = (1, 4, 24, 168)`; volatilidad `VOL_WINDOWS = (24, 168)` + Parkinson 24; tendencia `EMA_SPANS = (24, 168, 720)` + `DRAWDOWN_WINDOW = 720`; volumen `VOLUME_WINDOW = 168`; calendario; creencia `DRIFT_HALFLIFE = 168`, `VOL_HALFLIFE = 24` | `code/data.py` |
 | Calentamiento / normalización | `WARMUP_HOURS = 720`; z-score con el train de cada fold, recortado a `CLIP_Z = 5` | `code/data.py` |
 | Horas faltantes | no se rellenan; `gap_hours` por barra (1,114 h, sobre todo 2025–2026) | `code/data.py` |
-| Acciones, horizonte H, stop-loss, take-profit | por decidir (parte 03) | `code/env.py` |
+| Acciones | `Discrete(3)`: esperar / largo / corto (`ALLOW_SHORT = True`); solo se decide estando plano | `code/env.py` |
+| Horizonte, stop-loss, take-profit | `HORIZON_HOURS = 24` (reloj); barreras a k·σ̂·√H con `K_STOP = K_TAKE = 1.0`, σ̂ = `belief_vol` sin normalizar | `code/env.py` |
 | Resolución intrabarra | stop primero (`INTRABAR = "stop_first"`) | `code/env.py` |
-| Definición de episodio | por decidir (parte 03) | `code/env.py` |
+| Definición de episodio | entrenamiento: `EPISODE_BARS = 720` con inicio aleatorio, ruina si capital < `RUIN_FRACTION = 0.5`; evaluación: la partición completa | `code/env.py` |
+| Capital inicial y tamaño | `INITIAL_EQUITY = 1.0`; cada operación compromete todo el capital (1×, sin apalancamiento) | `code/env.py` |
 | Contribución | por decidir (parte 04): terminal al cierre o por paso | `code/reward.py` |
 | Algoritmo principal / segundo | por decidir (parte 05; propuesta DQN con descuento semi-Markov γ^τ / PPO) | `code/train.py` |
 | Rejilla de hiperparámetros y criterio de selección | por decidir (parte 05) | `code/train.py` |
