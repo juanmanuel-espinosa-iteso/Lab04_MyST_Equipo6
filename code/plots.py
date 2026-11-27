@@ -281,6 +281,44 @@ def write_eda_pdf(path, figures_dir, ohlcv, features, folds, regimes, analyses, 
             plt.close(fig)
 
 
+# ====================================================================== Parte 05: entrenamiento
+
+SEED_COLORS = (BLUE, ORANGE, AQUA, MUTED)
+
+
+def plot_training_curves(curves, runs, config, chosen_timesteps, fold, path, window=25):
+    """`training_curves_fold_{k}.png`: arriba, recompensa por episodio de entrenamiento (= ln del capital del episodio,
+    media móvil de `window` episodios) contra pasos, una línea por semilla de la configuración elegida; abajo, el
+    crecimiento log en validación de cada semilla en los puntos de control. Se marcan el fin de la exploración ε y el
+    punto de control elegido."""
+    total = max(int(runs["timesteps"].max()), 1)
+    with plt.rc_context(STYLE):
+        fig, (ax, ax_val) = plt.subplots(2, 1, figsize=(10, 6.5), sharex=True, gridspec_kw={"height_ratios": [3, 2]})
+        for i, (seed, curve) in enumerate(sorted(curves.items())):
+            color = SEED_COLORS[i % len(SEED_COLORS)]
+            smooth = curve["episode_reward"].rolling(window, min_periods=1).mean()
+            ax.plot(curve["timesteps"], smooth, color=color, lw=1.1, label=f"semilla {seed}")
+            val = runs[runs["seed"] == seed].sort_values("timesteps")
+            ax_val.plot(val["timesteps"], val["val_log_growth"], "o-", color=color, lw=1.1, ms=4)
+        end_eps = config["exploration_fraction"] * total
+        for axis in (ax, ax_val):
+            axis.axhline(0, color=INK, lw=0.6)
+            axis.axvline(end_eps, color=MUTED, lw=0.8, ls=":")
+            axis.axvline(chosen_timesteps, color=INK, lw=0.9, ls="--")
+        ax.annotate("fin de la exploración ε", (end_eps, ax.get_ylim()[1]), xytext=(4, -12), textcoords="offset points",
+                    fontsize=7, color=MUTED)
+        ax.annotate("punto de control elegido", (chosen_timesteps, ax.get_ylim()[1]), xytext=(4, -24),
+                    textcoords="offset points", fontsize=7, color=INK)
+        ax.set_title(f"Fold {fold}: recompensa por episodio de entrenamiento (media móvil de {window} episodios)")
+        ax.set_ylabel("ln(capital del episodio)")
+        ax.legend(loc="upper left", fontsize=8)
+        ax_val.set_title("Crecimiento log en validación (recorrido completo) en cada punto de control")
+        ax_val.set_ylabel("ln(capital final)")
+        ax_val.set_xlabel("pasos de entrenamiento (decisiones)")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150, metadata={"Software": None})
+
+
 # ====================================================================== Parte 06: evaluación en prueba
 
 STRATEGY_STYLE = {

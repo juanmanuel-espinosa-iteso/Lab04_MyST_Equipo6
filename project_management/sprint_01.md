@@ -18,7 +18,7 @@ del domingo 29 a las 23:59, revisado desde un clon limpio.
 | 02 EDA, regímenes y análisis de features | GC | hecho (2026-11-27, PR #3) |
 | 03 Entorno semi-Markov + `check_env` + operación de referencia | JME | hecho (2026-11-24, rama `feat/jme-entorno`) |
 | 04 Contribución + prueba de la recompensa | GC | hecho (2026-11-27, PR #4) |
-| 05 Entrenamiento: líneas base, semillas, búsqueda de HP | GC | pendiente |
+| 05 Entrenamiento: líneas base, semillas, búsqueda de HP | GC | en revisión (2026-11-27, rama `feat/gc-entrenamiento`) |
 | 06 Evaluación, benchmarks, bitácora + identidad contable | JME | maquinaria hecha (2026-11-25, rama `feat/jme-evaluacion`); falta correrla con el agente de la 05 |
 | 07 Sensibilidad (JME), ablación y segundo algoritmo (GC) | ambos | JME: maquinaria hecha (2026-11-27, rama `feat/jme-sensibilidad`), falta correrla con el agente · GC: pendiente |
 | 08 Formulación de Powell | ambos | pendiente |
