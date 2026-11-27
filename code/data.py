@@ -229,21 +229,30 @@ def _belief_features(r, ohlcv):
 
 
 def forward_log_return(ohlcv, horizon):
-    """Objetivo del análisis de features (parte 02): log(cierre en t + horizon h / apertura de la barra siguiente a t).
+    """Objetivo del análisis de features (parte 02): rendimiento log de una posición que entra a la apertura de la
+    barra siguiente a t y sale por horizonte de `horizon` horas, con la **misma convención que el entorno**
+    (`code/env.py`, `resolve_exit` sin barreras ni costos).
 
-    **No es causal** y nunca entra al estado: mide lo que pasa después de la decisión tomada al cierre de t, con el
-    llenado en la apertura siguiente. Con horas faltantes usa el último cierre conocido en t + horizon. Si la barra
-    siguiente empieza después de t + horizon (hueco más largo que el horizonte), la salida quedaría antes de la entrada:
-    esas filas son NaN, igual que la última barra.
+    Entrada: apertura de la barra e siguiente a t. Salida: cierre de la barra que termina justo en hora(e) + horizon;
+    si esa hora cae dentro de un hueco de datos, la apertura de la primera barra posterior (al cierre previo al hueco
+    todavía no se sabe que faltarán barras). NaN en la última barra o si los datos se acaban antes de la salida.
 
-    Con la entrada en t + 1 equivale al rendimiento de una posición del entorno que sale por horizonte de `horizon` h.
+    **No es causal** y nunca entra al estado: mide lo que pasa después de la decisión tomada al cierre de t.
     """
-    g = _hourly_grid(ohlcv)
-    entry = ohlcv["open"].shift(-1)
-    exit_close = g["close"].shift(-horizon).reindex(ohlcv.index)
-    next_bar = ohlcv.index.to_series().shift(-1)
-    valid = next_bar <= ohlcv.index.to_series() + pd.Timedelta(hours=horizon)
-    return np.log(exit_close / entry).where(valid).rename(f"fwd_ret_{horizon}h")
+    hour_ns = 3_600 * 10**9
+    times = ohlcv.index.as_unit("ns").asi8  # nanosegundos desde la época (con o sin zona horaria)
+    n = len(times)
+    out = np.full(n, np.nan)
+    entry_bar = np.arange(1, n)
+    deadline = times[entry_bar] + horizon * hour_ns
+    last_before = np.searchsorted(times, deadline, side="left") - 1  # última barra que empieza antes de la salida
+    closes_on_time = times[last_before] + hour_ns == deadline
+    after_gap = last_before + 1
+    has_after = after_gap < n
+    exit_price = np.where(closes_on_time, ohlcv["close"].to_numpy()[last_before],
+                          np.where(has_after, ohlcv["open"].to_numpy()[np.minimum(after_gap, n - 1)], np.nan))
+    out[:-1] = np.log(exit_price / ohlcv["open"].to_numpy()[entry_bar])
+    return pd.Series(out, index=ohlcv.index, name=f"fwd_ret_{horizon}h")
 
 
 def split_fold(df, fold_dates):
@@ -287,11 +296,16 @@ class Normalizer:
 
 @dataclass
 class FoldData:
-    """Datos de un fold listos para el entorno: OHLCV crudo y features normalizadas, alineados por partición."""
+    """Datos de un fold listos para el entorno, alineados por partición.
+
+    `features` (normalizadas) son la observación del agente; `raw_features` (sin normalizar) las usa el entorno donde
+    importan las unidades (la volatilidad que fija las barreras) y la bitácora para reportar el estado en la entrada.
+    """
 
     fold: int
     ohlcv: dict
     features: dict
+    raw_features: dict
     normalizer: Normalizer
 
 
@@ -306,6 +320,7 @@ def build_fold_dataset(ohlcv, features, fold, fold_dates):
         fold=fold,
         ohlcv={name: ohlcv.loc[part.index] for name, part in parts.items()},
         features={name: normalizer.transform(part) for name, part in parts.items()},
+        raw_features=parts,
         normalizer=normalizer,
     )
 

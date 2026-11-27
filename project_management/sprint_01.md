@@ -16,7 +16,7 @@ del domingo 29 a las 23:59, revisado desde un clon limpio.
 | División del trabajo 50/50 confirmada (`00_flujo_de_trabajo.md`) | JME | hecho (2026-11-24) |
 | 01 Datos, features causales, folds y normalizador + prueba de causalidad | JME | hecho (2026-11-24, rama `feat/jme-datos`) |
 | 02 EDA, regímenes y análisis de features | GC | en revisión (2026-11-25, rama `feat/gc-eda`) |
-| 03 Entorno semi-Markov + `check_env` + operación de referencia | JME | pendiente |
+| 03 Entorno semi-Markov + `check_env` + operación de referencia | JME | hecho (2026-11-24, rama `feat/jme-entorno`) |
 | 04 Contribución + prueba de la recompensa | GC | pendiente |
 | 05 Entrenamiento: líneas base, semillas, búsqueda de HP | GC | pendiente |
 | 06 Evaluación, benchmarks, bitácora + identidad contable | JME | pendiente |

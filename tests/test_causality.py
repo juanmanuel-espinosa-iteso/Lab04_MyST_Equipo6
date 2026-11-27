@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from code import data
+from code import data, env
 from main import BTC_CSV, FOLDS
 
 # Tramo corto (≈ 6 meses, hasta mediados de febrero de 2018) que incluye el hueco de 32 h (ya limpio) y las 43 barras
@@ -55,17 +55,19 @@ def test_normalized_observation_is_causal(ohlcv, full_features):
 
 
 @pytest.mark.parametrize("horizon", [1, 4, 24])
-def test_forward_return_is_nan_when_gap_exceeds_horizon(ohlcv, horizon):
-    """El objetivo de la parte 02 nunca tiene la salida antes de la entrada: si la barra siguiente empieza después de
-    t + horizon, es NaN; si no, es log(último cierre conocido en t + horizon / apertura siguiente)."""
+def test_forward_return_matches_env_horizon_exit(ohlcv, horizon):
+    """El objetivo de la parte 02 es el rendimiento de una salida por horizonte del entorno (sin barreras ni costos):
+    entrada a la apertura siguiente y, si el horizonte vence en un hueco, salida a la apertura posterior al hueco.
+    Se revisan barras normales y las previas al hueco de 32 h de febrero de 2018."""
     target = data.forward_log_return(ohlcv, horizon)
-    times = ohlcv.index.to_series()
-    too_far = times.shift(-1) > times + pd.Timedelta(hours=horizon)
-    assert too_far.iloc[FIRST_AFTER_GAP - 1]  # la barra antes del hueco de 32 h
-    assert target[too_far].isna().all()
-    i = 1_000
-    exit_close = ohlcv["close"].loc[: ohlcv.index[i] + pd.Timedelta(hours=horizon)].iloc[-1]
-    assert target.iloc[i] == pytest.approx(np.log(exit_close / ohlcv["open"].iloc[i + 1]))
+    arrays = [ohlcv[c].to_numpy() for c in ("open", "high", "low", "close")]
+    hours = ((ohlcv.index - ohlcv.index[0]).total_seconds() / 3600).to_numpy()
+    for i in [1_000, 2_500, FIRST_AFTER_GAP - 30, FIRST_AFTER_GAP - 5, FIRST_AFTER_GAP - 1, FIRST_AFTER_GAP]:
+        exit_ = env.resolve_exit(*arrays, hours, i + 1, 1, -np.inf, np.inf, horizon, "stop_first", len(ohlcv) - 1)
+        assert exit_.reason == "horizonte"
+        assert target.iloc[i] == pytest.approx(np.log(exit_.price / ohlcv["open"].iloc[i + 1]), abs=1e-12)
+    assert np.isnan(target.iloc[-1])
+    assert np.isfinite(target.iloc[:-horizon - 1]).all()
 
 
 @pytest.mark.parametrize("k", [1, 4])
