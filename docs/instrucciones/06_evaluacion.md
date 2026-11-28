@@ -52,7 +52,7 @@ REPETIR hasta cumplir el criterio de terminado:
 - [ ] **§3.9.2:** periodo del mayor drawdown en prueba: gráfica de acciones y precio, y explicación.
 - [ ] **§3.9.3:** correlación entre rendimientos del agente y de BTC en prueba; si es alta, discutir si el agente es un
       largo apalancado o filtrado.
-- [ ] **Simulación visual** (petición del profesor en clase, 2026-11-23; dueño **GC**, revisor JME): animación del agente
+- [x] **Simulación visual** (petición del profesor en clase, 2026-11-23; dueño **GC**, revisor JME): animación del agente
       operando un tramo de prueba, como el pingüino de FrozenLake de clase: precio barra por barra, decisión del agente,
       entrada y salida con su razón (horizonte, stop, take-profit, cierre), niveles de stop y take-profit, posición y
       capital acumulado contra BTC buy-and-hold → `artifacts/agent_simulation.gif` (`code/plots.py`, con
