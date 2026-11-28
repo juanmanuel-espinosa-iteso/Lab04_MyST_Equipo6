@@ -7,9 +7,11 @@ import matplotlib
 
 matplotlib.use("Agg")  # sin ventana: main.py corre igual en cualquier máquina
 
+import matplotlib.dates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from matplotlib.animation import FuncAnimation, PillowWriter  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
@@ -392,4 +394,113 @@ def plot_drawdown_period(ohlcv, trades, equity, window, fold, path, pad_days=3, 
         ax_eq.set_title("Capital a mercado")
         fig.tight_layout()
         fig.savefig(path, dpi=150)
+        plt.close(fig)
+
+
+# ====================================================================== Simulación visual del agente (GC)
+
+SIMULATION_DAYS = 14
+REASON_LABEL = {"horizonte": "horizonte", "stop": "stop-loss", "take_profit": "take-profit", "fin_datos": "fin de datos"}
+REASON_COLOR = {"horizonte": MUTED, "stop": "#d63031", "take_profit": AQUA, "fin_datos": MUTED}
+
+
+def busiest_window(trade_logs, days=SIMULATION_DAYS):
+    """Criterio fijo del tramo de la simulación: la ventana de `days` días (empezando a medianoche UTC) con más
+    operaciones del agente entre todos los folds de prueba; empates → el fold y la fecha más tempranos.
+    Devuelve (fold, inicio, fin)."""
+    best = None
+    for k in sorted(trade_logs):
+        log = trade_logs[k]
+        if not len(log):
+            continue
+        entries = pd.to_datetime(log["entry_time"], utc=True)
+        for start in pd.date_range(entries.min().floor("D"), entries.max().floor("D"), freq="D"):
+            n = int(((entries >= start) & (entries < start + pd.Timedelta(days=days))).sum())
+            if best is None or n > best[0]:
+                best = (n, k, start)
+    _, k, start = best
+    return k, start, start + pd.Timedelta(days=days)
+
+
+def write_agent_simulation_gif(ohlcv, trades, equity, btc_equity, fold, start, end, path, step_hours=2, fps=8):
+    """`agent_simulation.gif`: el agente operando un tramo de prueba, barra por barra, como el pingüino de FrozenLake.
+
+    Arriba, el precio hasta la hora actual, la posición abierta sombreada (verde = largo, naranja = corto) con sus
+    niveles de stop y take-profit, las entradas (▲/▼) y las salidas con su razón. Abajo, el capital del agente contra
+    comprar y mantener BTC, ambos en 1 al inicio del tramo. Solo lee la bitácora y las curvas de capital.
+    """
+    price = ohlcv.loc[start:end, "close"]
+    trades = trades.copy()
+    for col in ("decision_time", "entry_time", "exit_time"):
+        trades[col] = pd.to_datetime(trades[col], utc=True)
+    trades = trades[(trades["exit_time"] >= start) & (trades["entry_time"] <= end)]
+    agent = equity.loc[start:end]
+    agent = agent / agent.iloc[0]
+    btc = btc_equity.loc[start:end]
+    btc = btc / btc.iloc[0]
+    times = price.index[::step_hours]
+    pad = (price.max() - price.min()) * 0.08
+
+    with plt.rc_context(STYLE):
+        fig, (ax, ax_eq) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={"height_ratios": [2.3, 1]})
+        fig.subplots_adjust(left=0.08, right=0.97, top=0.86, bottom=0.08, hspace=0.3)
+
+        def draw(i):
+            now = times[i]
+            ax.clear()
+            ax_eq.clear()
+            seen = price.loc[:now]
+            ax.plot(seen.index, seen.to_numpy(), color=INK, lw=0.9)
+            ax.set_xlim(price.index[0], price.index[-1])
+            ax.set_ylim(price.min() - pad, price.max() + pad)
+            status = "plano: el agente decide al cierre de cada barra (esperar, largo o corto)"
+            for _, trade in trades[trades["entry_time"] <= now].iterrows():
+                long_ = trade["side"] == "largo"
+                color = AQUA if long_ else ORANGE
+                closed = trade["exit_time"] <= now
+                stop_at = trade["exit_time"] if closed else now
+                ax.axvspan(trade["entry_time"], stop_at, color=color, alpha=0.15, lw=0)
+                ax.scatter([trade["entry_time"]], [trade["entry_price"]], marker="^" if long_ else "v", color=color,
+                           s=45, zorder=4)
+                if closed:
+                    reason = trade["exit_reason"]
+                    ax.scatter([trade["exit_time"]], [trade["exit_price"]], marker="X", color=REASON_COLOR[reason],
+                               s=40, zorder=4)
+                else:
+                    for level, style in ((trade["stop_level"], "#d63031"), (trade["take_level"], AQUA)):
+                        ax.hlines(level, trade["entry_time"], now, colors=style, linestyles="--", lw=0.9)
+                    status = (f"{trade['side']} desde {trade['entry_time']:%d-%b %H:%M} a {trade['entry_price']:,.0f}; "
+                              f"stop {trade['stop_level']:,.0f} · take-profit {trade['take_level']:,.0f}")
+            last_exit = trades[trades["exit_time"] <= now].tail(1)
+            if len(last_exit):
+                t = last_exit.iloc[0]
+                net = t["net_pnl"] / t["equity_before"]
+                status += (f"   |   última salida: {REASON_LABEL[t['exit_reason']]} "
+                           f"({t['exit_time']:%d-%b %H:%M}), {net:+.2%} neto")
+            ax.set_title(f"Fold {fold} · prueba · {now:%Y-%m-%d %H:%M} UTC", loc="left")
+            ax.text(0.0, 1.16, "Agente DQN operando BTCUSDT (costos de 0.125 % por lado)", transform=ax.transAxes,
+                    fontsize=13, fontweight="bold")
+            ax.text(0.0, -0.09, status, transform=ax.transAxes, fontsize=8, color=INK)
+            ax.set_ylabel("USDT")
+            handles = [Line2D([], [], marker="^", ls="", color=AQUA, label="entra largo"),
+                       Line2D([], [], marker="v", ls="", color=ORANGE, label="entra corto"),
+                       Line2D([], [], marker="X", ls="", color="#d63031", label="sale por stop"),
+                       Line2D([], [], marker="X", ls="", color=AQUA, label="sale por take-profit"),
+                       Line2D([], [], marker="X", ls="", color=MUTED, label="sale por horizonte (24 h)"),
+                       Patch(color=MUTED, alpha=0.25, label="en posición")]
+            ax.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.0), fontsize=7, ncol=3)
+
+            a, b = agent.loc[:now], btc.loc[:now]
+            ax_eq.plot(a.index, a.to_numpy(), color=BLUE, lw=1.4, label=f"agente {a.iloc[-1] - 1:+.1%}")
+            ax_eq.plot(b.index, b.to_numpy(), color=ORANGE, lw=1.0, label=f"comprar y mantener BTC {b.iloc[-1] - 1:+.1%}")
+            ax_eq.axhline(1, color=INK, lw=0.5)
+            lo, hi = min(agent.min(), btc.min()), max(agent.max(), btc.max())
+            ax_eq.set_ylim(lo - 0.01, hi + 0.01)
+            ax_eq.set_ylabel("capital (inicio = 1)")
+            ax_eq.legend(loc="lower left", fontsize=8, ncol=2)
+            ax_eq.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%d-%b"))
+            return []
+
+        animation = FuncAnimation(fig, draw, frames=len(times), blit=False)
+        animation.save(path, writer=PillowWriter(fps=fps), dpi=80)
         plt.close(fig)

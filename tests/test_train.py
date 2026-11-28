@@ -200,3 +200,173 @@ def test_saved_search_is_reused_only_with_the_same_settings(tmp_path):
     other = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0, 1], seeds=[0], total_timesteps=1_000)
     assert train.load_search(path, other) is None
     assert train.load_search(tmp_path / "no_existe.pkl", jobs) is None
+
+
+@pytest.mark.parametrize("module, name, value", [
+    ("env", "HORIZON_HOURS", 12), ("env", "K_STOP", 2.0), ("env", "COST_PER_SIDE", 0.002), ("env", "INTRABAR", "tp_first"),
+    ("env", "EPISODE_BARS", 360), ("data", "FEATURES", ["ret_1h"]),
+])
+def test_reuse_is_refused_if_the_environment_or_features_changed(tmp_path, monkeypatch, module, name, value):
+    """Si cambia un parámetro del entorno o las features, la búsqueda guardada no se reusa (se volvería a entrenar)."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_ids=[0], seeds=[0])
+    path = tmp_path / "search.pkl"
+    train.save_search(path, jobs, pd.DataFrame({"fold": [1]}), {})
+    assert train.load_search(path, jobs) is not None
+    monkeypatch.setattr({"env": env, "data": data}[module], name, value)
+    assert train.load_search(path, jobs) is None
+
+
+# ---------------------------------------------------------------------- ablación por familias (parte 07, GC)
+
+def test_ablation_variants_cover_every_family_and_the_account():
+    """Una variante por familia de features, más la cuenta y la base sin quitar nada."""
+    assert train.ABLATION_VARIANTS == ["ninguna", *data.FEATURE_FAMILIES, "cuenta"]
+
+
+@pytest.mark.parametrize("family", list(data.FEATURE_FAMILIES))
+def test_ablate_drops_one_family_from_the_observation(fold_1, family):
+    """Quitar una familia la saca de las features de todas las particiones (la observación se achica), pero no de las
+    features sin normalizar: las barreras siguen usando la volatilidad estimada."""
+    ablated = train.ablate(fold_1, family)
+    for split in train.SPLITS:
+        assert list(ablated.features[split].columns) == [c for c in data.FEATURES
+                                                         if c not in data.FEATURE_FAMILIES[family]]
+        assert ablated.raw_features[split] is fold_1.raw_features[split]
+    trading_env = train.make_train_env(ablated, "ninguna")
+    assert trading_env.observation_space.shape == (len(data.FEATURES) - len(data.FEATURE_FAMILIES[family]) + 3,)
+
+
+def test_account_ablation_zeroes_the_account_in_training_and_evaluation(fold_1):
+    """Sin cuenta: al entrenar, las 3 variables de la cuenta llegan en 0; al evaluar, la política las pone en 0 antes de
+    decidir, así que dos observaciones que solo difieren en la cuenta dan la misma acción."""
+    trading_env = train.make_train_env(fold_1, "cuenta")
+    obs, _ = trading_env.reset(seed=0)
+    for _ in range(50):
+        obs, *_ = trading_env.step(env.LONG)
+        assert np.all(obs[-3:] == 0)
+    model = train.make_model("dqn", trading_env, train.GRID[0], seed=0)
+    policy = train.as_policy(model, mask_account=True)
+    base = np.zeros(trading_env.observation_space.shape, dtype=np.float32)
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        other = base.copy()
+        other[-3:] = rng.normal(size=3)
+        assert policy(other) == policy(base)
+
+
+# ---------------------------------------------------------------------- segundo algoritmo: PPO (parte 07, GC)
+
+def test_ppo_grid_is_small(fold_1):
+    """8 configuraciones de PPO (2 × 2 × 2), con la red fija en [64, 64] como la elegida de DQN."""
+    assert len(train.PPO_GRID) == 8 and all(c["net_arch"] == (64, 64) for c in train.PPO_GRID)
+    assert isinstance(train.make_model("ppo", train.make_train_env(fold_1), train.PPO_GRID[0], 0), train.PPO)
+
+
+def test_fast_policy_matches_predict_for_ppo(fold_1):
+    """Con PPO, la política rápida (moda de la distribución) elige lo mismo que `model.predict(deterministic=True)`."""
+    model, _ = train.train_agent(fold_1, train.PPO_GRID[0], seed=3, total_timesteps=4_096, algo="ppo")
+    trading_env = env.make_env(fold_1, "validation", reward.net_log_return, mode="eval")
+    obs, _ = trading_env.reset(seed=0)
+    fast, done = train.as_policy(model), False
+    while not done:
+        expected = int(model.predict(obs, deterministic=True)[0])
+        assert fast(obs) == expected
+        obs, _, terminated, truncated, _ = trading_env.step(expected)
+        done = terminated or truncated
+
+
+# ---------------------------------------------------------------------- corridas de ablación y de PPO, y sus tablas
+
+def test_ablation_jobs_use_the_chosen_config_and_score_test(fold_1, tmp_path):
+    """La ablación reentrena la configuración elegida, en su punto de control, una corrida por variante × semilla; esas
+    corridas sí se puntúan en prueba (se reportan, no eligen nada)."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.ablation_jobs(1, FOLDS[1], BTC_CSV, tmp_path, config_id=8, timesteps=1_000, seeds=[0],
+                               total_timesteps=2_000)
+    assert [j["variant"] for j in jobs] == train.ABLATION_VARIANTS
+    assert all(j["config_id"] == 8 and j["checkpoints"] == (1_000,) and j["score_test"] for j in jobs)
+    results, _ = train.hyperparameter_search([j for j in jobs if j["variant"] in ("volume", "cuenta")], processes=1)
+    assert set(results["variant"]) == {"volume", "cuenta"}
+    assert {"val_log_growth", "test_log_growth", "test_sharpe", "test_n_trades"} <= set(results.columns)
+
+
+def test_ppo_search_jobs_use_the_ppo_grid(tmp_path):
+    """La búsqueda de PPO recorre su propia rejilla (8) con las mismas semillas y puntos de control que DQN."""
+    from main import BTC_CSV, FOLDS
+
+    jobs = train.search_jobs(1, FOLDS[1], BTC_CSV, tmp_path, algo="ppo")
+    assert len(jobs) == len(train.PPO_GRID) * len(train.SEEDS)
+    assert {j["algo"] for j in jobs} == {"ppo"} and not any(j["score_test"] for j in jobs)
+
+
+def test_ablation_table_by_hand():
+    """Por fold y variante: medianas entre semillas en validación y prueba, y su diferencia contra la base."""
+    rows = []
+    for variant, val, test in (("ninguna", [0.1, 0.2, 0.3], [0.0, -0.1, 0.1]),
+                               ("volume", [-0.1, 0.0, 0.1], [-0.2, -0.3, -0.1])):
+        rows += [{"fold": 1, "variant": variant, "seed": s, "val_log_growth": v, "test_log_growth": t,
+                  "test_sharpe": t, "test_n_trades": 10} for s, (v, t) in enumerate(zip(val, test))]
+    table = train.ablation_table(pd.DataFrame(rows))
+    row = table.loc[(1, "volume")]
+    assert row["val_log_growth"] == pytest.approx(0.0) and row["delta_val"] == pytest.approx(-0.2)
+    assert row["test_log_growth"] == pytest.approx(-0.2) and row["delta_test"] == pytest.approx(-0.2)
+    assert table.loc[("media", "volume"), "delta_val"] == pytest.approx(-0.2)
+
+
+def test_training_stops_at_the_last_checkpoint_with_the_same_schedule(fold_1):
+    """Con un solo punto de control antes del total, el entrenamiento se detiene ahí, pero con el calendario de
+    exploración del total: el modelo es el mismo que el de ese punto en una corrida completa."""
+    saved = {}
+    full, _ = train.train_agent(fold_1, train.GRID[0], seed=5, total_timesteps=8_000, checkpoints=(6_000, 8_000),
+                                on_checkpoint=lambda m, n: saved.setdefault(n, train.evaluate_policy(
+                                    fold_1, "validation", train.as_policy(m), 5)))
+    short, curve = train.train_agent(fold_1, train.GRID[0], seed=5, total_timesteps=8_000, checkpoints=(6_000,),
+                                     on_checkpoint=lambda m, n: None)
+    assert short.num_timesteps == 6_000
+    assert train.evaluate_policy(fold_1, "validation", train.as_policy(short), 5) == saved[6_000]
+
+
+def test_chosen_summary_by_hand():
+    """Resumen del candidato elegido de un algoritmo: configuración, pasos, semilla mediana y dispersión en validación."""
+    results = results_table({(0, 100): [0.05, 0.06, 0.04], (1, 100): [0.50, -0.30, -0.20]})
+    summary = train.chosen_summary(results)
+    assert (summary["config_id"], summary["timesteps"], summary["seed"]) == (0, 100, 0)
+    assert summary["val_median"] == pytest.approx(0.05)
+    assert (summary["val_min"], summary["val_max"]) == (pytest.approx(0.04), pytest.approx(0.06))
+    assert summary["candidates_above_zero"] == 1 and summary["candidates"] == 2
+
+
+# ---------------------------------------------------------------------- simulación visual (GIF)
+
+def test_busiest_window_by_hand():
+    """El tramo del GIF es la ventana de 14 días con más operaciones entre todos los folds (criterio fijo)."""
+    from code import plots
+
+    day = pd.Timestamp("2025-01-01", tz="UTC")
+    logs = {1: pd.DataFrame({"entry_time": [day + pd.Timedelta(days=d) for d in (0, 1, 30)]}),
+            2: pd.DataFrame({"entry_time": [day + pd.Timedelta(days=d) for d in (100, 101, 102, 200)]})}
+    fold, start, end = plots.busiest_window(logs)
+    assert (fold, start, end) == (2, day + pd.Timedelta(days=100), day + pd.Timedelta(days=114))
+
+
+def test_agent_simulation_gif_is_written(tmp_path):
+    """El GIF se escribe con una operación cerrada y una abierta al final del tramo."""
+    from code import plots
+
+    index = pd.date_range("2025-01-01", periods=48, freq="h", tz="UTC")
+    close = pd.Series(100 + np.sin(np.arange(48) / 4), index=index)
+    ohlcv = pd.DataFrame({"close": close})
+    trades = pd.DataFrame([
+        {"decision_time": index[1], "entry_time": index[2], "exit_time": index[10], "side": "largo",
+         "exit_reason": "take_profit", "entry_price": 100.5, "exit_price": 101.0, "stop_level": 99.0,
+         "take_level": 101.0, "net_pnl": 0.004, "equity_before": 1.0},
+        {"decision_time": index[39], "entry_time": index[40], "exit_time": index[47], "side": "corto",
+         "exit_reason": "fin_datos", "entry_price": 99.5, "exit_price": 99.4, "stop_level": 100.5,
+         "take_level": 98.5, "net_pnl": -0.001, "equity_before": 1.004}])
+    equity = pd.Series(np.linspace(1, 1.01, 48), index=index)
+    path = tmp_path / "sim.gif"
+    plots.write_agent_simulation_gif(ohlcv, trades, equity, equity * 0.99, 1, index[0], index[-1], path, step_hours=6)
+    assert path.stat().st_size > 10_000
