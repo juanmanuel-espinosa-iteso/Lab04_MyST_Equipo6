@@ -273,11 +273,21 @@ def select_config(results, metric=SELECTION_METRIC):
 
 # ---------------------------------------------------------------------- reusar una búsqueda ya entrenada
 
+ENV_PARAMETERS = ("COST_PER_SIDE", "HORIZON_HOURS", "K_STOP", "K_TAKE", "INTRABAR", "ALLOW_SHORT", "EPISODE_BARS",
+                  "RUIN_FRACTION", "INITIAL_EQUITY", "OBS_CLIP", "ACCOUNT_FEATURES")
+
+
 def _signature(jobs):
-    """Lo que define una búsqueda: corridas, rejilla, hiperparámetros fijos y versión de la recompensa."""
+    """Lo que define una búsqueda: corridas, rejilla, hiperparámetros fijos, recompensa, parámetros del entorno, features
+    y el archivo de datos (su hash). Si cambia cualquiera, los modelos guardados ya no corresponden."""
+    import hashlib
+
     keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints")
+    csv_files = sorted({job["csv_path"] for job in jobs})
     return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRID), "dqn_fixed": str(DQN_FIXED),
-            "reward": reward.DEFAULT_REWARD}
+            "reward": reward.DEFAULT_REWARD, "env": {name: str(getattr(env, name)) for name in ENV_PARAMETERS},
+            "features": list(data.FEATURES),
+            "data": {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in csv_files}}
 
 
 def save_search(path, jobs, results, curves):

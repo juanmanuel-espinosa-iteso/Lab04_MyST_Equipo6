@@ -41,8 +41,10 @@ correr sin reentrenar, `LAB04_REUSE_MODELS=1 python main.py` (≈ 3 min) reusa l
 la búsqueda se hizo con los mismos parámetros; un clon limpio siempre entrena. Los datos de BTCUSDT están versionados en
 `data/Binance_BTCUSDT_1h.csv`; el S&P 500 (solo benchmark) se toma de `data/sp500_daily.csv`.
 
-**Semilla aleatoria:** `SEED = 42`, fijada en `main.py` y aplicada al inicio del pipeline; las semillas de
-entrenamiento se derivan de ella y toda función con aleatoriedad la recibe como argumento.
+**Semilla aleatoria:** `SEED = 42`, fijada en `main.py` y aplicada al inicio del pipeline; de ella salen las semillas
+de las líneas base, la evaluación y la sensibilidad (`SEED + k` en el fold k). Las tres semillas del entrenamiento son
+fijas y explícitas, `SEEDS = (0, 1, 2)` en `code/train.py`. Toda función con aleatoriedad recibe su semilla como
+argumento.
 
 ## Pruebas
 

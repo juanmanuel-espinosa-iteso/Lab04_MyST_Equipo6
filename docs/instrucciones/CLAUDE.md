@@ -40,8 +40,9 @@ walk-forward rigurosa. Materia: Microestructuras y Sistemas de Trading (ITESO). 
   ejecuta primero** (conservador). Se cuantifica qué proporción de operaciones cambia y cuánto cambia el resultado
   bajo el supuesto contrario.
 - **`terminated` solo para eventos reales** (ruina o límite duro de riesgo); el fin de datos es `truncated` (S18).
-- **Semilla fija: `SEED = 42`** en `main.py`; las semillas de entrenamiento se derivan de ella y toda función con
-  aleatoriedad la recibe como argumento.
+- **Semilla fija: `SEED = 42`** en `main.py`; las semillas de las líneas base, la evaluación y la sensibilidad se
+  derivan de ella (`SEED + k` por fold). Las del entrenamiento son fijas y explícitas, `train.SEEDS = (0, 1, 2)` (ver
+  `docs/decisiones.md`). Toda función con aleatoriedad recibe su semilla como argumento.
 - **Metadatos de cada corrida:** versiones de Stable-Baselines3, Gymnasium y torch, semilla, fold e
   hiperparámetros en `artifacts/run_metadata.json` (§2.2).
 - **Datos externos de precio no permitidos.** Única excepción: el S&P 500 (`^GSPC`) para el benchmark, nunca como
@@ -66,7 +67,7 @@ valor, actualízala. Los marcados *por decidir* se fijan en su parte y se regist
 
 | Parámetro | Valor | Dónde vive |
 |---|---|---|
-| Semilla | `SEED = 42`; semillas de entrenamiento derivadas (por decidir: cuántas, mínimo 3) | `main.py` |
+| Semilla | `SEED = 42` (líneas base, evaluación y sensibilidad: `SEED + k`); entrenamiento: `train.SEEDS = (0, 1, 2)` | `main.py`, `code/train.py` |
 | Rutas (`DATA`, `ARTIFACTS`, `FIGURES`) y fechas de los folds (`FOLDS`) | — | `main.py` |
 | Archivo de datos | `data/Binance_BTCUSDT_1h.csv` (CryptoDataDownload, Binance, horario OHLCV) | `main.py` → `code/data.py` |
 | Costo de transacción | 0.125 % por lado (`COST_PER_SIDE = 0.00125`) | `code/env.py` |
