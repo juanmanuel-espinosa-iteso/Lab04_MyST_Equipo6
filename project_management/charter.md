@@ -29,7 +29,7 @@ experimentos de sensibilidad; dashboard; implementación propia de los algoritmo
 | Contribución (04) | 2026-11-24 | GC | hecho (2026-11-27) |
 | Líneas base y un fold de punta a punta (05) | 2026-11-25 | GC | hecho (2026-11-27) |
 | 4 folds × semillas, búsqueda de HP y evaluación en prueba (05, 06) | 2026-11-26 | GC / JME | en revisión (2026-11-27) |
-| Sensibilidad, ablación, segundo algoritmo; `main.py` completo (07) | 2026-11-27 | JME / GC | pendiente |
+| Sensibilidad, ablación, segundo algoritmo; `main.py` completo (07) | 2026-11-27 | JME / GC | en revisión (2026-11-27; `main.py` completo ≈ 86 min) |
 | Reporte, walkthrough y presentación (08, 10) | 2026-11-28 | ambos | pendiente |
 | Revisión desde clon limpio (99) y último commit | 2026-11-29 | ambos | pendiente |
 

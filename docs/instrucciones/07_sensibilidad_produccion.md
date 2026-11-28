@@ -37,15 +37,19 @@ REPETIR hasta cumplir el criterio de terminado:
 - [ ] **Capacidad y saturación:** si 50 fondos operan algo similar; quién está del otro lado y por qué.
 - [ ] **Cambio de régimen:** qué pasa si los próximos 12 meses se parecen a 2018, a 2022 o a un régimen ausente; qué
       variables se degradarían más (con el análisis de features de la parte 02 y la ablación).
-- [ ] **Ablación (pregunta 7):** reentrenar quitando cada familia de variables con la configuración elegida y varias semillas
+- [x] **Ablación (pregunta 7):** reentrenar quitando cada familia de variables con la configuración elegida y varias semillas
       → `ablation.csv`.
-- [ ] **Segundo algoritmo (pregunta 7):** p. ej. PPO con la misma búsqueda en validación → `algorithm_comparison.csv`.
+- [x] **Segundo algoritmo (pregunta 7):** p. ej. PPO con la misma búsqueda en validación → `algorithm_comparison.csv`.
 
 **Estado (2026-11-27, JME):** los 4 escenarios de JME corren con el agente congelado de la parte 05 y, como referencia,
 con siempre largo y aleatorio (`run_sensitivity`, `latency_cost`, `same_trades_share`, `run_sensitivity_stage` →
 `sensitivity.csv`, `tests/test_sensitivity.py`, notebook 07). Cifras en `docs/decisiones.md`. Falta escribir en el
 reporte las respuestas de capacidad/saturación y cambio de régimen (texto, con el análisis de la parte 02). Ablación y
 segundo algoritmo: GC.
+
+**Estado (2026-11-27, GC):** ablación y segundo algoritmo en `run_ablation_stage` y `run_second_algorithm_stage`
+(`ablation.csv`, `algorithm_comparison.csv`, `validation_results_ppo.csv`), `code/train.py` (`ablate`, `MaskAccount`,
+`ablation_jobs`, `PPO_GRID`, `chosen_summary`), pruebas en `tests/test_train.py`, notebook 07b y filas en `decisiones.md`.
 
 ## Criterio de terminado
 

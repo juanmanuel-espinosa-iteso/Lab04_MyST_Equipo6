@@ -14,16 +14,18 @@ Los pasos de entrenamiento también se eligen en validación: cada corrida se pu
 `CHECKPOINTS` (parada temprana), porque con 300k pasos el agente memoriza el train.
 """
 
+import dataclasses
 import itertools
 import multiprocessing
 import pickle
 import time
 from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import pandas as pd
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
@@ -139,8 +141,29 @@ def make_dqn(trading_env, config, seed):
                **DQN_FIXED)
 
 
+# Segundo algoritmo (pregunta 7): PPO de SB3, on-policy. Descuenta con γ por decisión (su GAE no admite τ variable):
+# es una aproximación declarada frente al γ^τ del DQN. Rejilla de 8 (red fija en [64, 64]) para caber en el presupuesto.
+PPO_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "gamma": (0.99, 0.995),
+    "ent_coef": (0.0, 0.01),
+}
+PPO_GRID = [dict(zip(PPO_SEARCH_SPACE, values), net_arch=(64, 64))
+            for values in itertools.product(*PPO_SEARCH_SPACE.values())]
+PPO_FIXED = dict(n_steps=2048, batch_size=64, n_epochs=10, gae_lambda=0.95, clip_range=0.2)
+GRIDS = {"dqn": GRID, "ppo": PPO_GRID}
+
+
+def make_ppo(trading_env, config, seed):
+    """PPO de SB3 con la configuración `config` de `PPO_GRID`."""
+    return PPO("MlpPolicy", trading_env, seed=seed, verbose=0, device="cpu", learning_rate=config["learning_rate"],
+               gamma=config["gamma"], ent_coef=config["ent_coef"], policy_kwargs=dict(net_arch=list(config["net_arch"])),
+               **PPO_FIXED)
+
+
 class _Checkpoints(BaseCallback):
-    """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control."""
+    """Llama `on_checkpoint(model, pasos)` al llegar a cada punto de control y detiene el entrenamiento después del
+    último (los calendarios, como el de exploración ε, siguen siendo los del total de pasos)."""
 
     def __init__(self, checkpoints, on_checkpoint):
         super().__init__()
@@ -149,19 +172,64 @@ class _Checkpoints(BaseCallback):
     def _on_step(self):
         while self.pending and self.num_timesteps >= self.pending[0]:
             self.on_checkpoint(self.model, self.pending.pop(0))
-        return True
+        return bool(self.pending)
+
+
+# ---------------------------------------------------------------------- variantes de la observación (ablación)
+
+N_ACCOUNT = len(env.ACCOUNT_FEATURES)  # las 3 variables de la cuenta van al final de la observación
+ABLATION_VARIANTS = ["ninguna", *data.FEATURE_FAMILIES, "cuenta"]
+
+
+class MaskAccount(gym.ObservationWrapper):
+    """Pone en 0 las variables de la cuenta de la observación (ablación de la familia `cuenta`)."""
+
+    def observation(self, observation):
+        return _mask_account(observation)
+
+
+def _mask_account(observation):
+    masked = np.array(observation, dtype=np.float32, copy=True)
+    masked[..., -N_ACCOUNT:] = 0.0
+    return masked
+
+
+def ablate(fold_data, variant):
+    """`FoldData` sin las features de la familia `variant` en todas las particiones (la observación se achica).
+
+    Solo cambia la observación: `raw_features` queda igual, así que las barreras siguen usando la volatilidad estimada.
+    `ninguna` y `cuenta` (que se quita con `MaskAccount`) no cambian los datos.
+    """
+    if variant in ("ninguna", "cuenta"):
+        return fold_data
+    if variant not in data.FEATURE_FAMILIES:
+        raise ValueError(f"variante desconocida: {variant}")
+    drop = data.FEATURE_FAMILIES[variant]
+    return dataclasses.replace(fold_data, features={s: f.drop(columns=drop) for s, f in fold_data.features.items()})
+
+
+def make_train_env(fold_data, variant="ninguna", reward_name=reward.DEFAULT_REWARD):
+    """Entorno de entrenamiento (episodios aleatorios del train) de la variante de la observación."""
+    trading_env = env.make_env(ablate(fold_data, variant), "train", reward.REWARDS[reward_name])
+    return MaskAccount(trading_env) if variant == "cuenta" else trading_env
+
+
+def make_model(algo, trading_env, config, seed):
+    """Modelo sin entrenar del algoritmo `algo` ("dqn" o "ppo") con una configuración de su rejilla."""
+    return {"dqn": make_dqn, "ppo": make_ppo}[algo](trading_env, config, seed)
 
 
 def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward_name=reward.DEFAULT_REWARD,
-                checkpoints=(), on_checkpoint=None):
-    """Entrena un DQN en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
+                checkpoints=(), on_checkpoint=None, algo="dqn", variant="ninguna"):
+    """Entrena un agente en episodios aleatorios del train del fold. Devuelve (modelo, curva de entrenamiento).
 
     La curva tiene, por episodio, los pasos acumulados al terminarlo y su recompensa total (= ln del capital del
     episodio, con la contribución principal). `on_checkpoint(model, pasos)` se llama en cada punto de `checkpoints`.
+    `algo` es "dqn" (parte 05) o "ppo" (segundo algoritmo); `variant`, la familia que se quita (ablación).
     """
     torch.set_num_threads(1)
-    monitored = Monitor(env.make_env(fold_data, "train", reward.REWARDS[reward_name]))
-    model = make_dqn(monitored, config, seed)
+    monitored = Monitor(make_train_env(fold_data, variant, reward_name))
+    model = make_model(algo, monitored, config, seed)
     callback = _Checkpoints(checkpoints, on_checkpoint) if on_checkpoint else None
     model.learn(total_timesteps=total_timesteps, callback=callback)
     curve = pd.DataFrame({"timesteps": np.cumsum(monitored.get_episode_lengths()),
@@ -169,21 +237,28 @@ def train_agent(fold_data, config, seed, total_timesteps=TOTAL_TIMESTEPS, reward
     return model, curve
 
 
-def as_policy(model):
-    """Política determinista `obs -> acción` de un DQN: la acción de mayor Q̄ en la red (la que se evalúa en validación
-    y prueba).
+def as_policy(model, mask_account=False):
+    """Política determinista `obs -> acción` de un modelo de SB3 (la que se evalúa en validación y prueba).
 
-    Es el mismo argmax que `model.predict(obs, deterministic=True)` (prueba `test_fast_policy_matches_sb3_predict`), pero
-    llamando directo a la red Q, sin la preparación por observación de SB3: los recorridos completos son varias veces
-    más rápidos.
+    DQN: la acción de mayor Q̄, llamando directo a la red Q; PPO: la moda de la distribución de la política. Es lo mismo
+    que `model.predict(obs, deterministic=True)` (prueba `test_fast_policy_matches_sb3_predict`), sin la preparación por
+    observación de SB3, así que los recorridos completos son varias veces más rápidos. Con `mask_account`, la cuenta se
+    pone en 0 antes de decidir (ablación `cuenta`).
     """
-    q_net = model.q_net
-    q_net.set_training_mode(False)
+    model.policy.set_training_mode(False)
+    if hasattr(model, "q_net"):
+        def decide(obs_t):
+            return model.q_net(obs_t).argmax(dim=1)
+    else:
+        def decide(obs_t):
+            return model.policy.get_distribution(obs_t).mode()
 
     def policy(obs):
+        if mask_account:
+            obs = _mask_account(obs)
         with torch.no_grad():
-            q_values = q_net(torch.as_tensor(obs, dtype=torch.float32).reshape(1, -1))
-        return int(q_values.argmax(dim=1)[0])
+            action = decide(torch.as_tensor(obs, dtype=torch.float32).reshape(1, -1))
+        return int(action[0])
 
     return policy
 
@@ -209,21 +284,39 @@ def model_path(models_dir, fold, config_id, seed, timesteps):
 
 
 def search_jobs(fold, dates, csv_path, models_dir, config_ids=None, seeds=SEEDS, total_timesteps=TOTAL_TIMESTEPS,
-                checkpoints=CHECKPOINTS):
-    """Corridas (configuración × semilla) de la búsqueda de un fold."""
-    config_ids = range(len(GRID)) if config_ids is None else config_ids
+                checkpoints=CHECKPOINTS, algo="dqn"):
+    """Corridas (configuración × semilla) de la búsqueda de un fold con el algoritmo `algo`; solo train y validación."""
+    config_ids = range(len(GRIDS[algo])) if config_ids is None else config_ids
     return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(models_dir), config_id=c, seed=s,
-                 total_timesteps=total_timesteps, checkpoints=tuple(checkpoints))
+                 total_timesteps=total_timesteps, checkpoints=tuple(checkpoints), algo=algo, variant="ninguna",
+                 score_test=False)
             for c in config_ids for s in seeds]
+
+
+def ablation_jobs(fold, dates, csv_path, models_dir, config_id, timesteps, seeds=SEEDS, variants=None,
+                  total_timesteps=TOTAL_TIMESTEPS):
+    """Corridas de la ablación de un fold: la configuración elegida de DQN, con sus pasos, por variante × semilla.
+
+    Se entrena con el calendario de `total_timesteps` (como en la búsqueda) y se detiene en `timesteps`, así que la
+    variante `ninguna` reproduce el modelo elegido. Se puntúan también en prueba porque la ablación **se reporta**
+    (pregunta 7); no se usa para reelegir el modelo.
+    """
+    variants = ABLATION_VARIANTS if variants is None else variants
+    return [dict(fold=fold, dates=dates, csv_path=str(csv_path), models_dir=str(Path(models_dir) / v),
+                 config_id=config_id, seed=s, total_timesteps=total_timesteps, checkpoints=(timesteps,), algo="dqn",
+                 variant=v, score_test=True)
+            for v in variants for s in seeds]
 
 
 def run_job(job):
     """Entrena una corrida y, en cada punto de control, guarda el modelo y lo puntúa en validación (y en train solo en el
-    último punto); nunca en prueba. Devuelve (filas, curva de entrenamiento)."""
+    último punto; en prueba solo si `score_test`, en la ablación). Devuelve (filas, curva de entrenamiento)."""
     start = time.perf_counter()
+    algo, variant = job.get("algo", "dqn"), job.get("variant", "ninguna")
     fold_data = _fold_data(job["csv_path"], job["fold"], job["dates"])
-    config = GRID[job["config_id"]]
-    base = {"fold": job["fold"], "config_id": job["config_id"], "seed": job["seed"],
+    observed = ablate(fold_data, variant)
+    config = GRIDS[algo][job["config_id"]]
+    base = {"fold": job["fold"], "algo": algo, "variant": variant, "config_id": job["config_id"], "seed": job["seed"],
             **{k: str(v) if k == "net_arch" else v for k, v in config.items()}}
     rows = []
 
@@ -231,15 +324,17 @@ def run_job(job):
         path = model_path(job["models_dir"], job["fold"], job["config_id"], job["seed"], timesteps)
         path.parent.mkdir(parents=True, exist_ok=True)
         model.save(path)
-        policy, row = as_policy(model), {**base, "timesteps": timesteps}
+        policy, row = as_policy(model, mask_account=variant == "cuenta"), {**base, "timesteps": timesteps}
         # La validación decide (todos los puntos); el train es informativo (sobreajuste): solo en el último punto.
-        splits = (("validation", "val"),) + ((("train", "train"),) if timesteps == max(job["checkpoints"]) else ())
+        last = timesteps == max(job["checkpoints"])
+        splits = (("validation", "val"),) + ((("train", "train"),) if last else ())
+        splits += (("test", "test"),) if last and job.get("score_test") else ()
         for split, prefix in splits:
-            row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(fold_data, split, policy, job["seed"]).items()})
+            row.update({f"{prefix}_{k}": v for k, v in evaluate_policy(observed, split, policy, job["seed"]).items()})
         rows.append(row)
 
-    _, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"],
-                           checkpoints=job["checkpoints"], on_checkpoint=checkpoint)
+    _, curve = train_agent(fold_data, config, job["seed"], job["total_timesteps"], checkpoints=job["checkpoints"],
+                           on_checkpoint=checkpoint, algo=algo, variant=variant)
     for row in rows:
         row["minutes"] = (time.perf_counter() - start) / 60
     return rows, curve
@@ -254,7 +349,8 @@ def hyperparameter_search(jobs, processes=1):
         outputs = [run_job(job) for job in jobs]
     results = pd.DataFrame([row for rows, _ in outputs for row in rows])
     results = results.sort_values(["fold", "config_id", "timesteps", "seed"], ignore_index=True)
-    curves = {(job["fold"], job["config_id"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
+    curves = {(job["fold"], job["config_id"], job["seed"]) if job.get("variant", "ninguna") == "ninguna"
+              else (job["fold"], job["variant"], job["seed"]): curve for job, (_, curve) in zip(jobs, outputs)}
     return results, curves
 
 
@@ -282,9 +378,10 @@ def _signature(jobs):
     y el archivo de datos (su hash). Si cambia cualquiera, los modelos guardados ya no corresponden."""
     import hashlib
 
-    keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints")
+    keys = ("fold", "dates", "config_id", "seed", "total_timesteps", "checkpoints", "algo", "variant", "score_test")
     csv_files = sorted({job["csv_path"] for job in jobs})
-    return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRID), "dqn_fixed": str(DQN_FIXED),
+    return {"jobs": [tuple(str(job[k]) for k in keys) for job in jobs], "grid": str(GRIDS), "dqn_fixed": str(DQN_FIXED),
+            "ppo_fixed": str(PPO_FIXED),
             "reward": reward.DEFAULT_REWARD, "env": {name: str(getattr(env, name)) for name in ENV_PARAMETERS},
             "features": list(data.FEATURES),
             "data": {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in csv_files}}
@@ -306,3 +403,35 @@ def load_search(path, jobs):
     if saved["signature"] != _signature(jobs):
         return None
     return saved["results"], saved["curves"]
+
+
+# ---------------------------------------------------------------------- tablas de la pregunta 7
+
+def ablation_table(results):
+    """`ablation.csv`: por fold y variante, la mediana entre semillas del crecimiento log en validación y en prueba, el
+    Sharpe y las operaciones en prueba, y la diferencia contra la base (`ninguna`); al final, la media entre folds.
+
+    Un `delta_val` negativo dice que quitar la familia empeora la validación: la familia aporta."""
+    cols = ["val_log_growth", "test_log_growth", "test_sharpe", "test_n_trades"]
+    table = results.groupby(["fold", "variant"])[cols].median()
+    folds = table.index.get_level_values("fold")
+    base = table.xs("ninguna", level="variant")
+    table["delta_val"] = table["val_log_growth"] - base["val_log_growth"].reindex(folds).to_numpy()
+    table["delta_test"] = table["test_log_growth"] - base["test_log_growth"].reindex(folds).to_numpy()
+    variants = [v for v in ABLATION_VARIANTS if v in table.index.get_level_values("variant")]
+    table = table.reindex(pd.MultiIndex.from_product([sorted(set(folds)), variants], names=["fold", "variant"]))
+    mean = table.groupby(level="variant").mean().reindex(variants)
+    mean.index = pd.MultiIndex.from_product([["media"], variants], names=["fold", "variant"])
+    return pd.concat([table, mean])
+
+
+def chosen_summary(results, metric=SELECTION_METRIC):
+    """Lo que se reporta del candidato elegido de una búsqueda (para `algorithm_comparison.csv`): configuración, pasos,
+    semilla mediana, mediana, mínimo y máximo entre semillas en validación, y cuántos candidatos tienen mediana > 0."""
+    column = f"val_{metric}"
+    config_id, timesteps, seed = select_config(results, metric)
+    runs = results[(results["config_id"] == config_id) & (results["timesteps"] == timesteps)][column]
+    medians = results.groupby(["config_id", "timesteps"])[column].median()
+    return {"config_id": config_id, "timesteps": timesteps, "seed": seed, "val_median": float(runs.median()),
+            "val_min": float(runs.min()), "val_max": float(runs.max()),
+            "candidates": int(len(medians)), "candidates_above_zero": int((medians > 0).sum())}
