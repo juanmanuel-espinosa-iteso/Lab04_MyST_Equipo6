@@ -153,7 +153,7 @@ episodio.
 **Pruebas obligatorias (§3.11).** `check_env` sin advertencias en los 4 folds (`tests/test_env_check.py`); causalidad
 (`test_causality.py`); operación de referencia calculada a mano con razón de salida, duración y P&L
 (`test_reference_trade.py`, que es el ejemplo del Apéndice A); e identidad contable, capital final = inicial + Σ P&L
-neto de la bitácora (`test_accounting.py`). En total pasan 94 pruebas.
+neto de la bitácora (`test_accounting.py`). En total pasan 117 pruebas.
 
 ## 4. Función de contribución (pregunta 3)
 
@@ -227,11 +227,14 @@ candidatos le gana a no operar**. La dispersión entre semillas es tan grande co
 arriba: se espera menos en prueba.
 
 **Sobreajuste.** En el último punto de control (300k pasos), la mediana del crecimiento log en el train (recorrido
-completo) va de 17.4 a 22.2 entre configuraciones, y la de validación de −0.45 a −0.80. El agente memoriza trayectorias
+completo) va de 17.4 a 22.2 entre folds (mediana de todos los candidatos de cada fold), y la de validación de −0.45 a −0.80. El agente memoriza trayectorias
 del train; por eso los pasos se eligen en validación (parada temprana). Las curvas de entrenamiento con los puntos de
 validación están en `training_curves_fold_{k}.png`.
 
-![Figura 1. Curva de entrenamiento del fold 1 (configuración elegida, 3 semillas) y crecimiento log en validación en cada punto de control.](../artifacts/training_curves_fold_1.png)
+![Figura 1](../artifacts/training_curves_fold_1.png)
+
+*Figura 1. Curva de entrenamiento del fold 1 (configuración elegida, 3 semillas) y crecimiento log en validación en
+cada punto de control (`training_curves_fold_1.png`).*
 
 **Reproducibilidad.** Las semillas son fijas (`train.SEEDS = (0, 1, 2)`, `SEED = 42` para líneas base y evaluación) y
 quedan en `run_metadata.json` con las versiones. Tres corridas completas dieron las mismas cifras de validación en las
@@ -367,7 +370,9 @@ el stop está a σ̂·√24, la pérdida en el stop crece con σ̂: **las peores
 
 ### 7.2 El periodo del mayor drawdown (fold 2)
 
-![Figura 3. Precio de BTC y operaciones del agente durante su mayor drawdown (fold 2, 2024).](../artifacts/max_drawdown_fold_2.png)
+![Figura 3](../artifacts/max_drawdown_fold_2.png)
+
+*Figura 3. Precio de BTC y operaciones del agente durante su mayor drawdown (fold 2, 2024; `max_drawdown_fold_2.png`).*
 
 El mayor drawdown de prueba ocurre en el fold 2: del **5 de marzo** al **16 de octubre de 2024**, −37.6 % sobre el capital
 horario (−37.4 % sobre el diario), sin recuperarse antes de fin de año (`max_drawdown_fold_2.png`). Empieza el día del
@@ -463,8 +468,9 @@ la diferencia contra la base (negativo = quitarla empeora = la familia aporta); 
   dirección es débil y frágil. Además, por la redundancia entre familias, quitar volatilidad deja `belief_vol` y
   `belief_drift_se`, así que una ablación sin efecto no prueba que la información sobre.
 - **La cuenta es la que más pesa.** Sin ella el agente empeora en validación y en prueba y **opera más** (177 contra 134
-  operaciones): la caída del capital y la última operación lo frenan después de perder. Es el mismo mecanismo que hace
-  frágil al fold 2 en la sección 8.
+  operaciones): la caída del capital y la última operación lo frenan después de perder. Es un mecanismo plausible de
+  la fragilidad del fold 2 (sección 8), pero el efecto no es uniforme: en prueba, quitarla empeora en los folds 1 y 4,
+  y no en el 2 ni en el 3 (Δ +0.03 y +0.14).
 - Las semillas pesan tanto como las familias: en la base, el crecimiento log en prueba del fold 1 va de −0.15 a −0.42
   según la semilla.
 
@@ -485,7 +491,7 @@ el descuento semi-Markov correcto y reusa transiciones (off-policy), mientras qu
 señal (sección 2), no en el algoritmo.
 
 **Simulación visual.** `artifacts/agent_simulation.gif` muestra al agente operando las 2 semanas de prueba con más
-operaciones entre los 4 folds (criterio fijo; fold 3, 23 de febrero a 9 de marzo de 2025, 30 operaciones): precio,
+operaciones entre los 4 folds (criterio fijo; fold 3, 23 de febrero a 9 de marzo de 2025, 18 operaciones): precio,
 entradas, salidas con su razón, niveles de stop y take-profit, y el capital contra comprar y mantener BTC (−5.5 % contra
 −10.6 % en ese tramo).
 
