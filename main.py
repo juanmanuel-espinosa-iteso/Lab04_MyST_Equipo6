@@ -252,6 +252,22 @@ def run_sensitivity_stage(ohlcv, features, agent_policies=None, agent_env_params
           + f"; operaciones ambiguas: {int(per_fold['n_ambiguous'].xs('base', level='scenario').sum())}")
 
 
+def run_simulation_stage(ohlcv, results):
+    """Simulación visual del agente (GC, petición del profesor): `artifacts/agent_simulation.gif`.
+
+    El tramo se elige con un criterio fijo, las 2 semanas de prueba con más operaciones del agente entre todos los
+    folds (`plots.busiest_window`), y la animación solo lee la bitácora y las curvas de capital de la evaluación.
+    """
+    if not all(evaluate.AGENT in res for res in results.values()):
+        return
+    logs = {k: res[evaluate.AGENT]["trades"] for k, res in results.items()}
+    k, start, end = plots.busiest_window(logs)
+    agent, btc = results[k][evaluate.AGENT], results[k]["btc_buy_hold"]
+    plots.write_agent_simulation_gif(ohlcv, agent["trades"], agent["equity"], btc["equity"], k, start, end,
+                                     ARTIFACTS / "agent_simulation.gif")
+    print(f"[simulación] agent_simulation.gif: fold {k}, {start:%Y-%m-%d} a {end:%Y-%m-%d}")
+
+
 def chosen_models():
     """Configuración, pasos y semilla elegidos por fold en la parte 05 (de `run_metadata.json`)."""
     chosen = json.loads((ARTIFACTS / "run_metadata.json").read_text(encoding="utf-8"))["chosen"]
@@ -326,7 +342,8 @@ def main():
     ohlcv, features = run_data_stage()
     run_eda_stage(ohlcv, features)
     agent_policies = run_training_stage(ohlcv, features)
-    run_evaluation_stage(ohlcv, features, agent_policies)
+    results = run_evaluation_stage(ohlcv, features, agent_policies)
+    run_simulation_stage(ohlcv, results)
     run_sensitivity_stage(ohlcv, features, agent_policies)
     run_ablation_stage()
     run_second_algorithm_stage(ohlcv, features)

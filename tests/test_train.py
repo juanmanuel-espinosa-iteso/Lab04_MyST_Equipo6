@@ -337,3 +337,36 @@ def test_chosen_summary_by_hand():
     assert summary["val_median"] == pytest.approx(0.05)
     assert (summary["val_min"], summary["val_max"]) == (pytest.approx(0.04), pytest.approx(0.06))
     assert summary["candidates_above_zero"] == 1 and summary["candidates"] == 2
+
+
+# ---------------------------------------------------------------------- simulación visual (GIF)
+
+def test_busiest_window_by_hand():
+    """El tramo del GIF es la ventana de 14 días con más operaciones entre todos los folds (criterio fijo)."""
+    from code import plots
+
+    day = pd.Timestamp("2025-01-01", tz="UTC")
+    logs = {1: pd.DataFrame({"entry_time": [day + pd.Timedelta(days=d) for d in (0, 1, 30)]}),
+            2: pd.DataFrame({"entry_time": [day + pd.Timedelta(days=d) for d in (100, 101, 102, 200)]})}
+    fold, start, end = plots.busiest_window(logs)
+    assert (fold, start, end) == (2, day + pd.Timedelta(days=100), day + pd.Timedelta(days=114))
+
+
+def test_agent_simulation_gif_is_written(tmp_path):
+    """El GIF se escribe con una operación cerrada y una abierta al final del tramo."""
+    from code import plots
+
+    index = pd.date_range("2025-01-01", periods=48, freq="h", tz="UTC")
+    close = pd.Series(100 + np.sin(np.arange(48) / 4), index=index)
+    ohlcv = pd.DataFrame({"close": close})
+    trades = pd.DataFrame([
+        {"decision_time": index[1], "entry_time": index[2], "exit_time": index[10], "side": "largo",
+         "exit_reason": "take_profit", "entry_price": 100.5, "exit_price": 101.0, "stop_level": 99.0,
+         "take_level": 101.0, "net_pnl": 0.004, "equity_before": 1.0},
+        {"decision_time": index[39], "entry_time": index[40], "exit_time": index[47], "side": "corto",
+         "exit_reason": "fin_datos", "entry_price": 99.5, "exit_price": 99.4, "stop_level": 100.5,
+         "take_level": 98.5, "net_pnl": -0.001, "equity_before": 1.004}])
+    equity = pd.Series(np.linspace(1, 1.01, 48), index=index)
+    path = tmp_path / "sim.gif"
+    plots.write_agent_simulation_gif(ohlcv, trades, equity, equity * 0.99, 1, index[0], index[-1], path, step_hours=6)
+    assert path.stat().st_size > 10_000
