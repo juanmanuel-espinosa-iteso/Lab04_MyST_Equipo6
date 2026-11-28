@@ -79,11 +79,53 @@ la serie completa, incluso justo después de un hueco.
 
 ## 2. Análisis exploratorio, regímenes y estado de información (preguntas 1 y 2)
 
-> **Pendiente (GC).** Pregunta 1: al menos 4 regímenes del entrenamiento por rango de fechas, con volatilidad, tendencia
-> y drawdown (`artifacts/regimes.csv`, `artifacts/btcusdt_eda.pdf`). Pregunta 2: por qué ese estado de información,
-> con la autocorrelación (rendimientos y cuadrados) y las pruebas ADF/KPSS de los folds de entrenamiento, la información
-> mutua contra su nivel de azar (`feature_analysis_fold_{k}.csv`, `feature_robustness_fold_{k}.csv`) y la alternativa
-> rechazada (ventana de precios crudos, no estacionaria; ver `docs/decisiones.md`).
+Todo el análisis usa **solo el train del fold 1** (2017-09 a 2021-12) para no filtrar información a validación ni a
+prueba; los trains de los folds 2–4 sirven únicamente para revisar la estabilidad (`notebooks/02_eda.ipynb`,
+`artifacts/btcusdt_eda.pdf`).
+
+**Regímenes (pregunta 1).** Se marcan giros de **45 %** en el cierre diario (máximos y mínimos alternos); el umbral es
+fijo y reproducible, y con 35 % el bajista de 2018 y la caída de 2019–2020 se partían en rebotes. Salen 8 tramos en el
+train del fold 1 (`artifacts/regimes.csv`); el primero y el último son incompletos porque el giro aún no se confirma.
+
+| Tramo | Fechas | Días | Dirección | Rendimiento | Volatilidad anual | Drawdown máx. |
+|---|---|---|---|---|---|---|
+| 2 | 2017-09-14 a 2017-12-16 | 93 | alza (burbuja de 2017) | +499 % | 97 % | −21 % |
+| 3 | 2017-12-16 a 2018-12-15 | 364 | baja (invierno cripto) | −83 % | 87 % | −83 % |
+| 4 | 2018-12-15 a 2019-06-26 | 193 | alza (recuperación) | +308 % | 64 % | −16 % |
+| 5 | 2019-06-26 a 2020-03-12 | 260 | baja (hasta el choque del COVID) | −63 % | 91 % | −63 % |
+| 6 | 2020-03-12 a 2021-04-13 | 397 | alza (ciclo de 2020–21) | +1,224 % | 71 % | −25 % |
+| 7 | 2021-04-13 a 2021-07-20 | 98 | baja | −53 % | 92 % | −53 % |
+
+La volatilidad anual va de 64 % a 108 % y cambia con el régimen: las caídas de 2019–20 y 2021 rondan 91–92 % y las alzas
+de 2019, 2020–21 y fines de 2021 van de 64 % a 71 %; la excepción es la burbuja de 2017 (97 %). Los giros solo se conocen después de ocurrir, así que **describen el train y nunca entran al estado**; lo
+que el agente sí ve es la volatilidad, la tendencia y la caída desde el máximo, calculadas con datos hasta t.
+
+**Propiedades de los rendimientos horarios (train del fold 1, 38,194 barras).** Media 0.01 %, desviación 0.95 %,
+asimetría −0.48 y exceso de curtosis 29.8 (Jarque-Bera p ≈ 0): colas muy pesadas. La autocorrelación de los
+rendimientos es chica (−0.053 en el rezago 1), mientras que la de los absolutos (0.30) y la de los cuadrados (0.18) es
+grande, con Ljung-Box p ≈ 0 a 24 y 168 rezagos: **la volatilidad se agrupa y se predice; la dirección casi no**. El
+log-precio no es estacionario (ADF p = 0.83, KPSS p ≤ 0.01), y ADF rechaza la raíz unitaria en las 22 features.
+
+**Estado de información (pregunta 2).** Cada feature se compara con el rendimiento de las 24 h siguientes en una muestra
+**sin traslape** (una observación cada 25 h de reloj, n = 1,497 en el fold 1; con todas las horas los objetivos se
+traslapan y la información mutua máxima sube artificialmente de 0.056 a 0.183). El nivel de azar es el percentil 95 del
+máximo de las 22 IM con objetivos permutados, y el análisis se repite en los 25 desfases de la malla
+(`feature_analysis_fold_{k}.csv`, `feature_robustness_fold_{k}.csv`).
+
+| Lo que se encontró | Features | Evidencia (25 desfases, fold 1) |
+|---|---|---|
+| Informan el **tamaño** del movimiento | `belief_drift_se`, `rv_168h`, `belief_vol`, `rv_24h`, `parkinson_24h`, `drawdown_720h`, día de la semana | IM sobre el azar en 9–21 desfases; p < 0.05 con el valor absoluto del rendimiento en los 25 |
+| **Dirección** débil y frágil a la fase | `ret_24h` (ρ = −0.044), `belief_drift_t`, `ema_gap_720h`, `ema_gap_24h` | p < 0.05 en 5–11 de 25 desfases (por azar ≈ 1.2); ninguna en todos |
+| Sin evidencia individual | rendimientos de 1, 4 y 168 h, volumen, hora del día, el resto de tendencia | se conservan para la ablación (sección 9) |
+
+Se conservan las 22 features en 6 familias más las 3 de la cuenta: la IM es univariada y no descarta interacciones,
+y quedarse solo con las que superan el azar dejaría al agente sin nada sobre tendencia. La **alternativa rechazada** fue
+la ventana de precios crudos de la plantilla de clase: el log-precio tiene raíz unitaria, así que la red vería niveles
+que no se repiten entre train, validación y prueba. También se rechazaron 24 rezagos del rendimiento, porque su
+autocorrelación es casi nula. Hay redundancia entre familias (Spearman de 0.92 a 0.98 entre `rv_24h` y
+`parkinson_24h`, `ema_gap_720h` y `belief_drift`, `rv_168h` y `belief_drift_se`), que se declaró antes de la ablación.
+**Lectura para lo que sigue:** el estado informa bien cuánto se va a mover el precio y poco hacia dónde; con 0.125 % por
+lado, eso anticipa una ventaja direccional chica.
 
 ## 3. Formulación como problema de decisión secuencial (resumen)
 
@@ -115,9 +157,36 @@ neto de la bitácora (`test_accounting.py`). En total pasan 94 pruebas.
 
 ## 4. Función de contribución (pregunta 3)
 
-> **Pendiente (GC).** Pregunta 3: terminal contra por paso y qué comportamiento indeseado induciría la otra opción, con
-> las cifras del notebook 04 (media/desviación −0.063 por operación contra −0.015 por barra; las 4 trampas de §3.4).
-> La formulación está en el Apéndice A, sección 6.
+**Contribución elegida (`code/reward.py`, `REWARDS["net_log_return"]`).** Al cerrar cada operación se paga su
+rendimiento log neto,
+
+C = ln(1 + s·(P_sal − P_ent)/P_ent − c·(P_ent + P_sal)/P_ent),   c = 0.00125 por lado,
+
+y esperar vale 0. Como se opera con todo el capital y sin apalancamiento, **Σ C = ln(capital final)**: el agente optimiza
+exactamente el crecimiento que se evalúa, sin coeficientes de moldeo. Se compararon dos alternativas sobre las mismas
+operaciones del train del fold 1 (`notebooks/04_contribucion.ipynb`):
+
+- **Log bruto:** le da al aleatorio −0.0002 por operación (casi lo mismo que no operar) y a siempre largo un total de
+  +0.53, cuando su capital real cae a 0.6 % del inicial (−5.11 en log) por costos. Premia rotar porque no ve los costos.
+- **Log neto normalizado por σ̂·√H:** pone todas las épocas en la misma escala, pero su suma ya no es el capital.
+
+**Terminal contra por paso (pregunta 3).** Se eligió la contribución **terminal**: se paga al cierre y el descuento es
+γ^τ con τ en horas de reloj. El agente solo decide estando plano y no actúa durante la operación, así que las
+recompensas de las barras intermedias no dependen de ninguna acción que pueda cambiar. Pagada **por paso** (marcando a
+mercado en cada barra), la operación suma lo mismo, pero:
+
+1. **Dilución del crédito:** la relación media/desviación de siempre largo baja de −0.063 por operación a −0.015 por
+   barra en el train del fold 1. El crédito de abrir se reparte en ≈ 17 recompensas dominadas por el ruido horario.
+2. **Sesgo temporal:** el costo de entrada llega como castigo inmediato y, con descuento por barra, la ganancia tardía
+   pesa menos que la temprana. El agente aprendería a no abrir o a preferir operaciones que ganen pronto.
+3. **Si decidiera en cada barra** (otro diseño de entorno), el pago por paso lo empujaría a cerrar por el ruido del
+   marcado a mercado y a **rotar más**, que es justo lo que los costos castigan.
+
+**Las 4 trampas de §3.4.** (1) El P&L bruto premia el riesgo apalancado → log neto y sin apalancamiento. (2) El Sharpe
+por episodio no es markoviano → no se usa como recompensa. (3) La suma de logs paga la caída completa pero no su
+trayectoria → el estado ve la caída del capital y el drawdown se mide en la evaluación. (4) Coeficientes de moldeo →
+ninguno: esperar vale 0 porque γ^τ ya cobra el tiempo plano, y un costo de oportunidad contra BTC empujaría a estar
+largo siempre. La formulación completa está en el Apéndice A, sección 6.
 
 ## 5. Entrenamiento, búsqueda de hiperparámetros y criterio de selección
 
