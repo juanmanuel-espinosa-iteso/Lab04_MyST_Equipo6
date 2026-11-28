@@ -17,26 +17,27 @@ Generación (como en el Lab 3): Markdown → HTML → PDF con Chrome sin interfa
 
 - [x] Formulación de Powell completa (parte 08).
 - [ ] Tabla de decisiones de diseño: elección, alternativa rechazada y evidencia (datos o experimento).
-- [ ] **Pregunta 1:** ≥ 4 regímenes del entrenamiento con volatilidad, tendencia y drawdown.
-- [ ] **Pregunta 2:** por qué ese estado de información, con autocorrelación y estacionariedad de los folds de
+- [x] **Pregunta 1:** ≥ 4 regímenes del entrenamiento con volatilidad, tendencia y drawdown.
+- [x] **Pregunta 2:** por qué ese estado de información, con autocorrelación y estacionariedad de los folds de
       entrenamiento, y la alternativa rechazada.
-- [ ] **Pregunta 3:** contribución por paso o terminal y el comportamiento indeseado de la otra.
+- [x] **Pregunta 3:** contribución por paso o terminal y el comportamiento indeseado de la otra.
 - [x] **Pregunta 4:** variación entre folds y qué explica el más débil.
 - [x] **Pregunta 5:** contra BTC buy-and-hold y S&P 500 después de costos; si no gana, qué mide el resultado.
 - [x] **Pregunta 6:** sensibilidad a la resolución intrabarra y a una barra de retraso.
-- [ ] **Pregunta 7:** aporte de cada familia de variables (ablación) y segundo algoritmo contra el primero.
+- [x] **Pregunta 7:** aporte de cada familia de variables (ablación) y segundo algoritmo contra el primero.
 - [x] §3.9 completo (3 peores operaciones, mayor drawdown con gráfica, correlación con BTC).
 - [x] §3.10 completo (ejecución, latencia, capacidad, cambio de régimen).
 - [x] **Advertencia de interpretación** explícita: el simulador supone el resto del sistema gratuito, instantáneo y
       perfecto; magnitud estimada con los experimentos de la parte 07.
-- [ ] Procedimiento de entrenamiento, búsqueda de hiperparámetros y criterio de selección con referencia a
+- [x] Procedimiento de entrenamiento, búsqueda de hiperparámetros y criterio de selección con referencia a
       `validation_results_fold_{k}.csv`.
 - [ ] Toda cifra sale de `artifacts/` (verificar contra los CSV antes de entregar).
 
 **Estado (2026-11-27, JME):** `docs/reporte.md` → `docs/reporte.pdf` con `python docs/generar_pdf.py reporte`
 (rama `feat/jme-reporte`). Hechas las secciones de JME: resumen, 1 (datos), 3 (Powell resumido; Apéndice A =
-`powell.md`), 6 (P4 y P5), 7 (§3.9), 8 (P6), 10 (§3.10) y 11 (advertencia y limitaciones). Pendientes de GC, marcadas
-en el reporte: 2 (P1 y P2), 4 (P3), 5 (entrenamiento) y 9 (P7).
+`powell.md`), 6 (P4 y P5), 7 (§3.9), 8 (P6), 10 (§3.10) y 11 (advertencia y limitaciones). Secciones de GC hechas
+(2026-11-27, rama `feat/gc-reporte`): 2 (P1 y P2), 4 (P3), 5 (entrenamiento) y 9 (P7, con la simulación visual); la
+sección 9 lee `ablation.csv` y `algorithm_comparison.csv`, que llegan con el #10.
 
 ## Checklist de la presentación
 
