@@ -198,8 +198,9 @@ se hace bootstrap, porque el mercado sigue.
 - **Entrada (VFA):** X^π(S_{t_n}) = argmax_{x ∈ {0, 1, 2}} Q̄(S_{t_n}, x | θ). Q̄ es una red neuronal (DQN) que
   aproxima C + γ^τ · V̄(S_{t_{n+1}}), la contribución de la decisión más el valor del estado al que lleva.
   - La observación de 25 variables (sección 2) es la entrada de la red.
-  - La política es determinista en la evaluación (`model.predict(obs, deterministic=True)`) y ε-greedy en el
-    entrenamiento.
+  - La política es determinista en la evaluación y ε-greedy en el entrenamiento. La determinista es `train.as_policy`,
+    que toma el argmax de la red Q directamente: elige lo mismo que `model.predict(obs, deterministic=True)` en cada
+    decisión (`test_fast_policy_matches_sb3_predict`), pero más rápido.
 - **Salida (PFA):** el gestor de posiciones es una regla analítica con θ^{gestor} = (H, k_stop, k_take) = (24 h, 1, 1)
   (`env.barrier_levels`, `env.resolve_exit`). No hay optimización embebida: cierra por la primera barrera o por el
   horizonte. Por eso la política completa es un híbrido VFA + PFA.
@@ -209,11 +210,15 @@ se hace bootstrap, porque el mercado sigue.
 1. **θ de la red:** DQN de Stable-Baselines3. Es Q-learning con red, off-policy, con replay buffer y red objetivo. El
    buffer es semi-Markov: guarda (S_{t_n}, x, C, S_{t_{n+1}}, τ_n) con τ_n de `info["duration"]`, y el objetivo usa
    γ^{τ_n}.
-2. **Hiperparámetros:** rejilla chica, solo en **validación**, con al menos 3 semillas por configuración. Se busca en
-   tasa de aprendizaje, γ, tamaño de red y exploración, y opcionalmente H y k. Todas las combinaciones
-   configuración × semilla quedan en `artifacts/validation_results_fold_{k}.csv`.
-3. **Selección:** el criterio se fija antes de ver los resultados: la mediana entre semillas del Sharpe neto en
-   validación. Se reporta la dispersión entre semillas, no la mejor semilla.
+2. **Hiperparámetros:** rejilla de 16 configuraciones, solo en **validación**, con 3 semillas (0, 1, 2) por
+   configuración: tasa de aprendizaje {1e-4, 5e-4} × γ por hora {0.99, 0.995} × red {[64, 64], [128, 128]} ×
+   exploración {0.1, 0.3}. H y k quedan fijos (su sensibilidad se mide en la parte 07). Los pasos de entrenamiento
+   también son un hiperparámetro: cada corrida se puntúa en validación cada 50k pasos, de 50k a 300k (parada temprana).
+   Todas las combinaciones configuración × semilla × pasos quedan en `artifacts/validation_results_fold_{k}.csv`.
+3. **Selección (criterio A, fijado antes de ver los resultados):** la mediana entre semillas del **crecimiento log en
+   validación** (ln del capital final de un recorrido completo), que es lo mismo que suma la contribución. Se prefirió
+   al Sharpe porque el Sharpe de no operar es indefinido. Empates: menos pasos y luego menor índice. Va a prueba la
+   **semilla mediana** de la configuración elegida, y se reporta la dispersión entre semillas, no la mejor semilla.
 4. **Un modelo por fold:** se entrena con la configuración elegida, se congela y toca la prueba **una sola vez** (parte 06).
 
 **Qué no es.**
