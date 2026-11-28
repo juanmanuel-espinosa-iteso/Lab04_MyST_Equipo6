@@ -79,11 +79,53 @@ la serie completa, incluso justo después de un hueco.
 
 ## 2. Análisis exploratorio, regímenes y estado de información (preguntas 1 y 2)
 
-> **Pendiente (GC).** Pregunta 1: al menos 4 regímenes del entrenamiento por rango de fechas, con volatilidad, tendencia
-> y drawdown (`artifacts/regimes.csv`, `artifacts/btcusdt_eda.pdf`). Pregunta 2: por qué ese estado de información,
-> con la autocorrelación (rendimientos y cuadrados) y las pruebas ADF/KPSS de los folds de entrenamiento, la información
-> mutua contra su nivel de azar (`feature_analysis_fold_{k}.csv`, `feature_robustness_fold_{k}.csv`) y la alternativa
-> rechazada (ventana de precios crudos, no estacionaria; ver `docs/decisiones.md`).
+Todo el análisis usa **solo el train del fold 1** (2017-09 a 2021-12) para no filtrar información a validación ni a
+prueba; los trains de los folds 2–4 sirven únicamente para revisar la estabilidad (`notebooks/02_eda.ipynb`,
+`artifacts/btcusdt_eda.pdf`).
+
+**Regímenes (pregunta 1).** Se marcan giros de **45 %** en el cierre diario (máximos y mínimos alternos); el umbral es
+fijo y reproducible, y con 35 % el bajista de 2018 y la caída de 2019–2020 se partían en rebotes. Salen 8 tramos en el
+train del fold 1 (`artifacts/regimes.csv`); el primero y el último son incompletos porque el giro aún no se confirma.
+
+| Tramo | Fechas | Días | Dirección | Rendimiento | Volatilidad anual | Drawdown máx. |
+|---|---|---|---|---|---|---|
+| 2 | 2017-09-14 a 2017-12-16 | 93 | alza (burbuja de 2017) | +499 % | 97 % | −21 % |
+| 3 | 2017-12-16 a 2018-12-15 | 364 | baja (invierno cripto) | −83 % | 87 % | −83 % |
+| 4 | 2018-12-15 a 2019-06-26 | 193 | alza (recuperación) | +308 % | 64 % | −16 % |
+| 5 | 2019-06-26 a 2020-03-12 | 260 | baja (hasta el choque del COVID) | −63 % | 91 % | −63 % |
+| 6 | 2020-03-12 a 2021-04-13 | 397 | alza (ciclo de 2020–21) | +1,224 % | 71 % | −25 % |
+| 7 | 2021-04-13 a 2021-07-20 | 98 | baja | −53 % | 92 % | −53 % |
+
+La volatilidad anual va de 64 % a 108 % y cambia con el régimen: las caídas de 2019–20 y 2021 rondan 91–92 % y las alzas
+de 2019, 2020–21 y fines de 2021 van de 64 % a 71 %; la excepción es la burbuja de 2017 (97 %). Los giros solo se conocen después de ocurrir, así que **describen el train y nunca entran al estado**; lo
+que el agente sí ve es la volatilidad, la tendencia y la caída desde el máximo, calculadas con datos hasta t.
+
+**Propiedades de los rendimientos horarios (train del fold 1, 38,194 barras).** Media 0.01 %, desviación 0.95 %,
+asimetría −0.48 y exceso de curtosis 29.8 (Jarque-Bera p ≈ 0): colas muy pesadas. La autocorrelación de los
+rendimientos es chica (−0.053 en el rezago 1), mientras que la de los absolutos (0.30) y la de los cuadrados (0.18) es
+grande, con Ljung-Box p ≈ 0 a 24 y 168 rezagos: **la volatilidad se agrupa y se predice; la dirección casi no**. El
+log-precio no es estacionario (ADF p = 0.83, KPSS p ≤ 0.01), y ADF rechaza la raíz unitaria en las 22 features.
+
+**Estado de información (pregunta 2).** Cada feature se compara con el rendimiento de las 24 h siguientes en una muestra
+**sin traslape** (una observación cada 25 h de reloj, n = 1,497 en el fold 1; con todas las horas los objetivos se
+traslapan y la información mutua máxima sube artificialmente de 0.056 a 0.183). El nivel de azar es el percentil 95 del
+máximo de las 22 IM con objetivos permutados, y el análisis se repite en los 25 desfases de la malla
+(`feature_analysis_fold_{k}.csv`, `feature_robustness_fold_{k}.csv`).
+
+| Lo que se encontró | Features | Evidencia (25 desfases, fold 1) |
+|---|---|---|
+| Informan el **tamaño** del movimiento | `belief_drift_se`, `rv_168h`, `belief_vol`, `rv_24h`, `parkinson_24h`, `drawdown_720h`, día de la semana | IM sobre el azar en 9–21 desfases; p < 0.05 con el valor absoluto del rendimiento en los 25 |
+| **Dirección** débil y frágil a la fase | `ret_24h` (ρ = −0.044), `belief_drift_t`, `ema_gap_720h`, `ema_gap_24h` | p < 0.05 en 5–11 de 25 desfases (por azar ≈ 1.2); ninguna en todos |
+| Sin evidencia individual | rendimientos de 1, 4 y 168 h, volumen, hora del día, el resto de tendencia | se conservan para la ablación (sección 9) |
+
+Se conservan las 22 features en 6 familias más las 3 de la cuenta: la IM es univariada y no descarta interacciones,
+y quedarse solo con las que superan el azar dejaría al agente sin nada sobre tendencia. La **alternativa rechazada** fue
+la ventana de precios crudos de la plantilla de clase: el log-precio tiene raíz unitaria, así que la red vería niveles
+que no se repiten entre train, validación y prueba. También se rechazaron 24 rezagos del rendimiento, porque su
+autocorrelación es casi nula. Hay redundancia entre familias (Spearman de 0.92 a 0.98 entre `rv_24h` y
+`parkinson_24h`, `ema_gap_720h` y `belief_drift`, `rv_168h` y `belief_drift_se`), que se declaró antes de la ablación.
+**Lectura para lo que sigue:** el estado informa bien cuánto se va a mover el precio y poco hacia dónde; con 0.125 % por
+lado, eso anticipa una ventaja direccional chica.
 
 ## 3. Formulación como problema de decisión secuencial (resumen)
 
@@ -115,18 +157,85 @@ neto de la bitácora (`test_accounting.py`). En total pasan 94 pruebas.
 
 ## 4. Función de contribución (pregunta 3)
 
-> **Pendiente (GC).** Pregunta 3: terminal contra por paso y qué comportamiento indeseado induciría la otra opción, con
-> las cifras del notebook 04 (media/desviación −0.063 por operación contra −0.015 por barra; las 4 trampas de §3.4).
-> La formulación está en el Apéndice A, sección 6.
+**Contribución elegida (`code/reward.py`, `REWARDS["net_log_return"]`).** Al cerrar cada operación se paga su
+rendimiento log neto,
+
+C = ln(1 + s·(P_sal − P_ent)/P_ent − c·(P_ent + P_sal)/P_ent),   c = 0.00125 por lado,
+
+y esperar vale 0. Como se opera con todo el capital y sin apalancamiento, **Σ C = ln(capital final)**: el agente optimiza
+exactamente el crecimiento que se evalúa, sin coeficientes de moldeo. Se compararon dos alternativas sobre las mismas
+operaciones del train del fold 1 (`notebooks/04_contribucion.ipynb`):
+
+- **Log bruto:** le da al aleatorio −0.0002 por operación (casi lo mismo que no operar) y a siempre largo un total de
+  +0.53, cuando su capital real cae a 0.6 % del inicial (−5.11 en log) por costos. Premia rotar porque no ve los costos.
+- **Log neto normalizado por σ̂·√H:** pone todas las épocas en la misma escala, pero su suma ya no es el capital.
+
+**Terminal contra por paso (pregunta 3).** Se eligió la contribución **terminal**: se paga al cierre y el descuento es
+γ^τ con τ en horas de reloj. El agente solo decide estando plano y no actúa durante la operación, así que las
+recompensas de las barras intermedias no dependen de ninguna acción que pueda cambiar. Pagada **por paso** (marcando a
+mercado en cada barra), la operación suma lo mismo, pero:
+
+1. **Dilución del crédito:** la relación media/desviación de siempre largo baja de −0.063 por operación a −0.015 por
+   barra en el train del fold 1. El crédito de abrir se reparte en ≈ 17 recompensas dominadas por el ruido horario.
+2. **Sesgo temporal:** el costo de entrada llega como castigo inmediato y, con descuento por barra, la ganancia tardía
+   pesa menos que la temprana. El agente aprendería a no abrir o a preferir operaciones que ganen pronto.
+3. **Si decidiera en cada barra** (otro diseño de entorno), el pago por paso lo empujaría a cerrar por el ruido del
+   marcado a mercado y a **rotar más**, que es justo lo que los costos castigan.
+
+**Las 4 trampas de §3.4.** (1) El P&L bruto premia el riesgo apalancado → log neto y sin apalancamiento. (2) El Sharpe
+por episodio no es markoviano → no se usa como recompensa. (3) La suma de logs paga la caída completa pero no su
+trayectoria → el estado ve la caída del capital y el drawdown se mide en la evaluación. (4) Coeficientes de moldeo →
+ninguno: esperar vale 0 porque γ^τ ya cobra el tiempo plano, y un costo de oportunidad contra BTC empujaría a estar
+largo siempre. La formulación completa está en el Apéndice A, sección 6.
 
 ## 5. Entrenamiento, búsqueda de hiperparámetros y criterio de selección
 
-> **Pendiente (GC).** Líneas base con costos (`artifacts/baselines.csv`); DQN con `SemiMarkovReplayBuffer`; rejilla de
-> 16 configuraciones × 3 semillas con puntos de control cada 50k pasos, solo en validación
-> (`validation_results_fold_{k}.csv`); criterio A fijado antes de ver resultados (mediana entre semillas del
-> crecimiento log en validación) y semilla mediana a prueba; sobreajuste train contra validación; curvas
-> (`training_curves_fold_{k}.png`). Resultado: la misma configuración (tasa 5e-4, γ = 0.99 por hora, red [64, 64],
-> exploración 0.1) gana en los 4 folds, con medianas en validación de +0.225, −0.253, +0.005 y −0.063.
+**Líneas base con costos (`artifacts/baselines.csv`).** Antes de entrenar se evalúan tres políticas triviales en las
+tres particiones de cada fold. En validación, el aleatorio pierde entre −0.72 y −1.83 en log y siempre largo entre
+−0.34 y −2.24; siempre plano vale 0 por construcción. Es la vara que tiene que superar el agente.
+
+**Algoritmo.** DQN de Stable-Baselines3 2.9.2 con `SemiMarkovReplayBuffer` (`code/train.py`): guarda la duración real
+τ de cada transición y el objetivo es y = C + (1 − terminado)·γ^τ·max Q̄(S′, ·), con γ por hora. Con γ por decisión,
+una operación de 24 h se descontaría igual que 1 h de espera (0.99 contra 0.99²⁴ = 0.786). La ruina corta el bootstrap
+y el fin de ventana no. Sin `VecNormalize`: las features ya están normalizadas por fold y normalizar la recompensa
+rompería Σ C = ln(capital). `check_env` pasa sin advertencias en los 4 folds.
+
+**Búsqueda, solo en validación.** Rejilla de **16 configuraciones** (tasa de aprendizaje {1e-4, 5e-4} × γ por hora
+{0.99, 0.995} × red {[64, 64], [128, 128]} × exploración {0.1, 0.3}) × **3 semillas** (0, 1, 2) × 4 folds, con 300k
+pasos por corrida. Los **pasos de entrenamiento también son un hiperparámetro**: cada corrida se puntúa en validación
+cada 50k pasos, así que hay 96 candidatos (configuración, pasos) por fold. Todo queda en
+`validation_results_fold_{k}.csv` (288 filas por fold); la prueba no se toca.
+
+**Criterio, fijado antes de ver resultados (A).** La **mediana entre semillas del crecimiento log en validación** (ln
+del capital final de un recorrido completo). Es lo que optimiza la contribución y está definido aunque el agente no
+opere, mientras que el Sharpe de no operar es indefinido; el Sharpe de validación se reporta como informativo. Empates:
+menos pasos y luego menor índice. A prueba va la **semilla mediana** de la configuración elegida, no la mejor.
+
+**Resultado.** La **misma configuración gana en los 4 folds**: tasa 5e-4, γ = 0.99 por hora, red [64, 64] y exploración
+0.1.
+
+| Fold | Pasos | Mediana en validación | Semillas (0, 1, 2) | Candidatos con mediana > 0 |
+|---|---|---|---|---|
+| 1 | 300k | +0.225 | +0.225, +0.609, −0.255 | 2 de 96 |
+| 2 | 300k | −0.253 | −0.125, −0.253, −0.485 | 0 de 96 |
+| 3 | 250k | +0.005 | +0.037, +0.005, −0.998 | 1 de 96 |
+| 4 | 300k | −0.063 | +0.053, −0.063, −0.568 | 0 de 96 |
+
+El agente le gana al aleatorio y a siempre largo en validación, pero **en los folds 2 y 4 ni el mejor de los 96
+candidatos le gana a no operar**. La dispersión entre semillas es tan grande como la diferencia entre configuraciones
+(en el fold 3, de +0.037 a −0.998), y elegir el mejor de 96 candidatos sobre un solo año sesga la mediana elegida hacia
+arriba: se espera menos en prueba.
+
+**Sobreajuste.** En el último punto de control (300k pasos), la mediana del crecimiento log en el train (recorrido
+completo) va de 17.4 a 22.2 entre configuraciones, y la de validación de −0.45 a −0.80. El agente memoriza trayectorias
+del train; por eso los pasos se eligen en validación (parada temprana). Las curvas de entrenamiento con los puntos de
+validación están en `training_curves_fold_{k}.png`.
+
+![Figura 1. Curva de entrenamiento del fold 1 (configuración elegida, 3 semillas) y crecimiento log en validación en cada punto de control.](../artifacts/training_curves_fold_1.png)
+
+**Reproducibilidad.** Las semillas son fijas (`train.SEEDS = (0, 1, 2)`, `SEED = 42` para líneas base y evaluación) y
+quedan en `run_metadata.json` con las versiones. Tres corridas completas dieron las mismas cifras de validación en las
+1,152 filas, y JME reprodujo en otra máquina los 4 modelos elegidos. La búsqueda tarda ≈ 41 min con 10 procesos.
 
 ## 6. Resultados en prueba (preguntas 4 y 5)
 
@@ -166,7 +275,7 @@ salida) entre el capital medio, por año.
 <img src="../artifacts/equity_curves_test_fold_4.png">
 </div>
 
-*Figura 1. Capital en prueba del agente contra BTC comprar y mantener, S&P 500, siempre largo y aleatorio, folds 1 a 4
+*Figura 2. Capital en prueba del agente contra BTC comprar y mantener, S&P 500, siempre largo y aleatorio, folds 1 a 4
 (`equity_curves_test_fold_{k}.png`).*
 
 **Pregunta 4: ¿cómo varía el desempeño entre folds y qué explica el más débil?** El agente pierde en los cuatro folds.
@@ -258,7 +367,7 @@ el stop está a σ̂·√24, la pérdida en el stop crece con σ̂: **las peores
 
 ### 7.2 El periodo del mayor drawdown (fold 2)
 
-![Figura 2. Precio de BTC y operaciones del agente durante su mayor drawdown (fold 2, 2024).](../artifacts/max_drawdown_fold_2.png)
+![Figura 3. Precio de BTC y operaciones del agente durante su mayor drawdown (fold 2, 2024).](../artifacts/max_drawdown_fold_2.png)
 
 El mayor drawdown de prueba ocurre en el fold 2: del **5 de marzo** al **16 de octubre de 2024**, −37.6 % sobre el capital
 horario (−37.4 % sobre el diario), sin recuperarse antes de fin de año (`max_drawdown_fold_2.png`). Empieza el día del
@@ -326,9 +435,59 @@ mismo que mostró la dispersión entre semillas en validación (en el fold 3, +0
 
 ## 9. Ablación por familias y segundo algoritmo (pregunta 7)
 
-> **Pendiente (GC).** Ablación: reentrenar con la configuración elegida y varias semillas quitando cada familia de
-> variables (`artifacts/ablation.csv`), reportada sin reelegir el modelo con la prueba. Segundo algoritmo (PPO) con la
-> misma búsqueda en validación (`artifacts/algorithm_comparison.csv`).
+Ambos análisis se **reportan**: no se usan para reelegir el modelo que fue a prueba (`notebooks/07b_ablacion_ppo.ipynb`).
+
+**Ablación por familias.** Se reentrena la configuración elegida de cada fold (sus pasos y sus 3 semillas) quitando una
+familia de la observación a la vez; la variante *cuenta* pone en 0 sus 3 variables. Las barreras del gestor siguen
+usando σ̂, así que solo cambia lo que ve la red. La variante sin quitar nada reproduce exactamente el modelo elegido (el
+pipeline lo verifica), así que la diferencia se debe solo a la familia. Cada cifra es la mediana entre semillas y Δ es
+la diferencia contra la base (negativo = quitarla empeora = la familia aporta); media de los 4 folds
+(`artifacts/ablation.csv`):
+
+| Se quita | Δ validación | Δ prueba | Folds donde empeora en prueba | Operaciones en prueba |
+|---|---|---|---|---|
+| — (base) | 0 | 0 | — | 134 |
+| Rendimientos | −0.19 | +0.19 | 0 de 4 | 97 |
+| Volatilidad | −0.27 | +0.02 | 2 de 4 | 110 |
+| Tendencia | −0.28 | +0.20 | 1 de 4 | 76 |
+| Volumen | −0.15 | +0.15 | 1 de 4 | 86 |
+| Calendario | −0.31 | +0.14 | 1 de 4 | 141 |
+| Creencia | −0.17 | +0.11 | 0 de 4 | 82 |
+| **Cuenta** | **−0.35** | **−0.10** | 2 de 4 | **177** |
+
+- **El Δ de validación está sesgado.** La base es el mejor de 96 candidatos en validación y las variantes no pasaron por
+  esa selección (maldición del ganador), así que que todas las familias "aporten" en validación es en buena parte un
+  artefacto. La prueba no pasó por ninguna selección y es la comparación honesta, aunque ruidosa.
+- **Ninguna familia de mercado tiene un aporte que se sostenga fuera de la selección.** En prueba, quitar rendimientos
+  o creencia no empeora en ningún fold, y tendencia, volumen o calendario solo en uno. Cuadra con la sección 2: la
+  dirección es débil y frágil. Además, por la redundancia entre familias, quitar volatilidad deja `belief_vol` y
+  `belief_drift_se`, así que una ablación sin efecto no prueba que la información sobre.
+- **La cuenta es la que más pesa.** Sin ella el agente empeora en validación y en prueba y **opera más** (177 contra 134
+  operaciones): la caída del capital y la última operación lo frenan después de perder. Es el mismo mecanismo que hace
+  frágil al fold 2 en la sección 8.
+- Las semillas pesan tanto como las familias: en la base, el crecimiento log en prueba del fold 1 va de −0.15 a −0.42
+  según la semilla.
+
+**Segundo algoritmo: PPO.** PPO de SB3 (on-policy, actor-crítico) con la **misma búsqueda en validación**: rejilla de 8
+(tasa de aprendizaje {1e-4, 3e-4} × γ {0.99, 0.995} × coeficiente de entropía {0, 0.01}, red [64, 64]), 3 semillas,
+puntos de control cada 50k pasos y el mismo criterio A. **Aproximación declarada:** el GAE de PPO descuenta con γ por
+decisión, no con γ^τ. El modelo elegido de cada algoritmo se evalúa una vez en prueba (`artifacts/algorithm_comparison.csv`,
+media de los 4 folds):
+
+| Algoritmo | Mediana del elegido en validación | Candidatos con mediana > 0 | Crecimiento log en prueba | Sharpe en prueba | Operaciones en prueba |
+|---|---|---|---|---|---|
+| DQN semi-Markov | −0.02 | 3 de 384 | −0.17 | −0.83 | 95 |
+| PPO | −0.31 | 0 de 192 | −0.49 | −2.13 | 251 |
+
+DQN queda por encima en validación y en prueba, y PPO opera más del doble. Es consistente con la formulación: DQN usa
+el descuento semi-Markov correcto y reusa transiciones (off-policy), mientras que PPO descuenta igual una operación de
+24 h que una hora de espera. Pero **ninguno de los dos le gana a no operar después de costos**: el límite está en la
+señal (sección 2), no en el algoritmo.
+
+**Simulación visual.** `artifacts/agent_simulation.gif` muestra al agente operando las 2 semanas de prueba con más
+operaciones entre los 4 folds (criterio fijo; fold 3, 23 de febrero a 9 de marzo de 2025, 30 operaciones): precio,
+entradas, salidas con su razón, niveles de stop y take-profit, y el capital contra comprar y mantener BTC (−5.5 % contra
+−10.6 % en ese tramo).
 
 ## 10. Fallas de producción (§3.10)
 
