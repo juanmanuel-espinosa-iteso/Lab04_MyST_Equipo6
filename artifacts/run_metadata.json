@@ -132,5 +132,5 @@
   "runs": 192,
   "processes": 10,
   "reused_search": false,
-  "training_minutes": 40.4
+  "training_minutes": 41.0
 }
